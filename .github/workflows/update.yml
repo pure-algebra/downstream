@@ -1,0 +1,29 @@
+name: Refresh copies
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Refresh every copy from its branch
+        run: python3 .downstream/update.py . -U
+
+      - name: Push
+        run: git push origin HEAD:${{ github.ref_name }}

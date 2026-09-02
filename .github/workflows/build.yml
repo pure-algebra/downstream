@@ -1,0 +1,42 @@
+name: Build family
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install elan
+        run: |
+          curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Build order
+        run: python3 .downstream/list.py . --topo
+
+      - name: Build and test every package in dependency order
+        run: python3 .downstream/build.py . -t --report "$RUNNER_TEMP/build-report.json"
+
+      - name: Render report
+        if: always()
+        uses: ./.downstream/actions/render-report
+        with:
+          build-report-path: ${{ runner.temp }}/build-report.json
+          output-path: ${{ runner.temp }}/report.md
+
+      - name: Add report to job summary
+        if: always()
+        run: cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-report
+          path: ${{ runner.temp }}/build-report.json
