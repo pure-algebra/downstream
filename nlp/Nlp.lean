@@ -1,0 +1,19 @@
+import Nlp.Core
+import Nlp.Pattern
+import Nlp.Pipeline
+import Nlp.Syntax
+import Nlp.Grammar
+import Nlp.Parse
+import Nlp.Sequence
+import Nlp.Dependency
+import Nlp.Tokenize
+import Nlp.Morphology
+import Nlp.Normalize
+import Nlp.Model
+import Nlp.IO
+import Nlp.Eval
+import Nlp.Eval.Dependency
+import Nlp.EvalLemmas
+import Nlp.Eval.Evalb
+
+/-! `lean4-nlp`: algebra-first classical natural-language processing in Lean 4. -/

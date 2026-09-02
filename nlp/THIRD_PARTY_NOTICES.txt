@@ -1,0 +1,106 @@
+lean4-nlp third-party notices
+=============================
+
+EVALB regression fixtures
+-------------------------
+
+Files:
+  NlpTests/Fixtures/Evalb/sample.prm
+  NlpTests/Fixtures/Evalb/sample.gld
+  NlpTests/Fixtures/Evalb/sample.tst
+
+These are the sample inputs distributed with EVALB, originally by Satoshi
+Sekine and Michael Collins and subsequently updated by David Brooks and David
+Ellis. EVALB's authors released the package without copyright restriction and
+the updated package is distributed under the Unlicense. The complete notice is
+included at NlpTests/Fixtures/Evalb/LICENSE.txt.
+
+Upstream project: https://nlp.cs.nyu.edu/evalb/
+
+Unicode Character Database
+--------------------------
+
+The tokenizer's Unicode decimal-number and whitespace tables are derived from
+the Unicode Character Database, version 17.0.0.
+
+Upstream data: https://www.unicode.org/Public/17.0.0/ucd/
+
+UNICODE LICENSE V3
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2026 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of data files and any associated documentation (the "Data Files") or software
+and any associated documentation (the "Software") to deal in the Data Files
+or Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, and/or sell copies of the Data
+Files or Software, and to permit persons to whom the Data Files or Software
+are furnished to do so, provided that either (a) this copyright and permission
+notice appear with all copies of the Data Files or Software, or (b) this
+copyright and permission notice appear in associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE BE
+LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR
+ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER
+IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall not
+be used in advertising or otherwise to promote the sale, use or other dealings
+in these Data Files or Software without prior written authorization of the
+copyright holder.
+
+WordNet Morphy detachment table
+-------------------------------
+
+File:
+  Nlp/Morphology/English.lean
+
+The English productive suffix table is derived from the Rules of Detachment in
+Princeton WordNet's Morphy documentation. No WordNet database, index, or
+exception-list data is included.
+
+Upstream documentation:
+  https://wordnet.princeton.edu/documentation/morphy7wn
+
+WORDNET RELEASE 3.0 LICENSE
+
+This software and database is being provided to you, the LICENSEE, by Princeton
+University under the following license. By obtaining, using and/or copying this
+software and database, you agree that you have read, understood, and will
+comply with these terms and conditions.: Permission to use, copy, modify and
+distribute this software and database and its documentation for any purpose
+and without fee or royalty is hereby granted, provided that you agree to comply
+with the following copyright notice and statements, including the disclaimer,
+and that the same appear on ALL copies of the software, database and
+documentation, including modifications that you make for internal use or for
+distribution.
+
+WordNet 3.0 Copyright 2006 by Princeton University. All rights reserved.
+
+THIS SOFTWARE AND DATABASE IS PROVIDED "AS IS" AND PRINCETON UNIVERSITY MAKES
+NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR IMPLIED. BY WAY OF EXAMPLE, BUT
+NOT LIMITATION, PRINCETON UNIVERSITY MAKES NO REPRESENTATIONS OR WARRANTIES OF
+MERCHANTABILITY OR FITNESS FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE
+LICENSED SOFTWARE, DATABASE OR DOCUMENTATION WILL NOT INFRINGE ANY THIRD PARTY
+PATENTS, COPYRIGHTS, TRADEMARKS OR OTHER RIGHTS. The name of Princeton
+University or Princeton may not be used in advertising or publicity pertaining
+to distribution of the software and/or database. Title to copyright in this
+software, database and any associated documentation shall at all times remain
+with Princeton University and LICENSEE agrees to preserve same.
+
+No Stanford CoreNLP source code, model files, or generated model artifacts are
+included in this repository.

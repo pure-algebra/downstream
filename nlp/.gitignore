@@ -1,0 +1,12 @@
+vendor/
+reference/
+.lake/
+build/
+*.olean
+*.pdf
+
+.claude/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
