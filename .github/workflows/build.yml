@@ -40,3 +40,9 @@ jobs:
         with:
           name: build-report
           path: ${{ runner.temp }}/build-report.json
+
+      # build.py records the verdict in the report and exits 0 either way;
+      # the reference repository derives its status from the report through
+      # its status actions. Here the report's own verdict decides the job.
+      - name: Fail unless every critical package is green
+        run: python3 -c "import json,sys; r=json.load(open('$RUNNER_TEMP/build-report.json')); print('green' if r['green'] else 'RED: ' + ', '.join(x['name'] for x in r['repos'] if x['critical'] and not x['green'])); sys.exit(0 if r['green'] else 1)"
