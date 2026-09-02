@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+      - name: Build libraries, axiom gate, and gate executables
+        run: lake build
+      - name: Build the audited root with warnings as errors
+        run: lake --wfail build HashVerified
+      - name: Recheck the audit root with an independent kernel
+        run: lake env leanchecker --fresh Hash.Verified
+      - name: SHA-256 and SHA-224 self-test against the pinned CAVP vectors
+        run: lake exe hash_sha256 --self-test
+      - name: SHA3-512 self-test against the pinned CAVP vectors
+        run: lake exe hash_sha3_512sum --self-test
+      - name: Combined self-test over every sealed CAVP response file
+        run: lake exe hash_selftest
+      - name: Vendor seal in both directions
+        run: lake exe hash_vendorseal
+      - name: Internal-citation gate
+        run: lake exe hash_citations
+      - name: Trust self-test with planted violations
+        run: lake exe hash_trustselftest

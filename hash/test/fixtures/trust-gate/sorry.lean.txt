@@ -1,0 +1,5 @@
+namespace Hash
+
+theorem plantedSorry : (1 : Nat) = 2 := sorry
+
+end Hash

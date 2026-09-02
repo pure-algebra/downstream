@@ -1,0 +1,82 @@
+name = "hash"
+version = "0.1.0"
+description = "Proved hash functions in Lean 4: SHA-256 and SHA-224 from FIPS 180-4 and SHA3-512 from FIPS 202, each with a bit-level transcription of its standard, a native ByteArray implementation, and the machine-checked refinement between them"
+keywords = ["sha-256", "sha-224", "sha3-512", "keccak", "fips-180-4", "fips-202", "verified", "lean4"]
+license = "MIT"
+readmeFile = "README.md"
+defaultTargets = ["Hash", "HashVerified", "HashTest", "HashGates",
+                  "hash_sha256", "hash_sha3_512sum", "hash_selftest",
+                  "hash_vendorseal", "hash_citations", "hash_trustselftest"]
+# `lake test` builds the audited root: the `#guard_msgs` pins on the two
+# per-family axiom audit lines are the test.
+testDriver = "HashVerified"
+
+# No implicit binder is invented from a free variable, and every warning is an
+# error at elaboration so that `lake --wfail build` and a plain `lake build`
+# decide the same thing.
+leanOptions = { autoImplicit = false, relaxedAutoImplicit = false, warningAsError = true }
+
+# The public library a consumer imports. Semantic declarations and proofs only.
+[[lean_lib]]
+name = "Hash"
+globs = ["Hash.*"]
+
+# The audited root: the known-answer tests and the two axiom audits. Nothing
+# here is reachable from `Hash.lean`, so a consumer of the library never
+# elaborates it.
+[[lean_lib]]
+name = "HashVerified"
+roots = ["Hash.Verified"]
+
+# Counterexample witnesses and the elaboration-time axiom gate.
+[[lean_lib]]
+name = "HashTest"
+globs = ["HashTest.*"]
+
+# Repository gates implemented in Lean. Tooling, not semantics; audited for
+# totality and forbidden axioms under the implementation ceiling.
+[[lean_lib]]
+name = "HashGates"
+globs = ["HashGates.*"]
+
+# Executable entry points. Each is a one-line wrapper under `hashbin/` that
+# calls the audited `cli` of its HashGates module; `hashbin/` itself holds no
+# logic.
+#
+# The root module name, not `srcDir`, disambiguates an entry point from a
+# library root. With `srcDir = "hashbin"` and `root = "Hash"` both
+# `hashbin/Hash.lean` and `./Hash.lean` would claim the module name `Hash`:
+# Lake keys modules on the bare name and derives output paths from the
+# package-level `leanLibDir`, so the two would share one build key and one
+# `.olean`. Lake checks root collisions between executables only, never
+# between an executable and a library. Every entry point here therefore uses
+# `root = "hashbin.<Name>"` under the default source directory, which resolves
+# to the same `hashbin/<Name>.lean`.
+#
+# Module names and executable names are both global across a Lake workspace,
+# so a package that requires this one cannot also define `Gates.Common` or an
+# executable called `sha256`. The `HashGates`/`hashbin` module trees and the
+# `hash_` prefix on every executable name keep this package's names its own.
+[[lean_exe]]
+name = "hash_sha256"
+root = "hashbin.Sha256"
+
+[[lean_exe]]
+name = "hash_sha3_512sum"
+root = "hashbin.Sha3Sum"
+
+[[lean_exe]]
+name = "hash_selftest"
+root = "hashbin.SelfTest"
+
+[[lean_exe]]
+name = "hash_vendorseal"
+root = "hashbin.VendorSeal"
+
+[[lean_exe]]
+name = "hash_citations"
+root = "hashbin.Citations"
+
+[[lean_exe]]
+name = "hash_trustselftest"
+root = "hashbin.TrustSelfTest"
