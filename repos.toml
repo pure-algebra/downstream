@@ -24,13 +24,13 @@ critical = true
 # The default build is red by design while a frozen breaker battery waits
 # for its builder (test/fixtures/trust-gate/known-red.txt there), so only the
 # production library is the downstream target; the repository's own CI runs
-# its trust self-test over the green remainder. Built without --wfail, as its
-# own CI does: warnings are not errors under that repository's policy.
+# its trust self-test over the green remainder.
 [effect4]
 url = "https://github.com/pure-algebra/lean4-effect4"
 rev = "main"
 critical = true
 build_targets = ["Effect4"]
+build_options = ["--wfail"]
 
 [whatwg]
 url = "https://github.com/pure-algebra/lean4-whatwg"
