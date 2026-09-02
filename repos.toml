@@ -10,6 +10,12 @@ rev = "main"
 critical = true
 build_options = ["--wfail"]
 
+[typescript]
+url = "https://github.com/pure-algebra/lean4-typescript"
+rev = "main"
+critical = true
+build_options = ["--wfail"]
+
 [hash]
 url = "https://github.com/pure-algebra/lean4-hash"
 rev = "main"
@@ -21,6 +27,7 @@ url = "https://github.com/pure-algebra/lean4-nlp"
 rev = "main"
 critical = true
 
+# Requires effects and typescript.
 # The default build is red by design while a frozen breaker battery waits
 # for its builder (test/fixtures/trust-gate/known-red.txt there), so only the
 # production library is the downstream target; the repository's own CI runs

@@ -9,15 +9,16 @@ and uses its scripts unchanged, vendored under `.downstream/` as a git
 subtree of [leanprover/downstream](https://github.com/leanprover/downstream).
 What it does not have is that repository's nightly-toolchain tracking,
 adaptation bots, and artifact cache; this family pins one released toolchain
-and five repositories.
+and six repositories.
 
 | Directory | Upstream | Depends on, inside this tree |
 | --- | --- | --- |
 | `effects/` | [lean4-effects](https://github.com/pure-algebra/lean4-effects) | nothing |
+| `typescript/` | [lean4-typescript](https://github.com/pure-algebra/lean4-typescript) | nothing |
 | `hash/` | [lean4-hash](https://github.com/pure-algebra/lean4-hash) | nothing |
 | `nlp/` | [lean4-nlp](https://github.com/pure-algebra/lean4-nlp) | nothing |
-| `effect4/` | [lean4-effect4](https://github.com/pure-algebra/lean4-effect4) | `../effects` |
-| `whatwg/` | [lean4-whatwg](https://github.com/pure-algebra/lean4-whatwg) | `../effects`, `../hash` |
+| `effect4/` | [lean4-effect4](https://github.com/pure-algebra/lean4-effect4) | `../effects`, `../typescript`, `../whatwg` (planned) |
+| `whatwg/` | [lean4-whatwg](https://github.com/pure-algebra/lean4-whatwg) | `../effects`, `../hash`, `../typescript` |
 
 ## How it works
 
