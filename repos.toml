@@ -1,0 +1,39 @@
+# The pure-algebra Lean family as local copies. `.downstream/update.py . -U`
+# refreshes every copy from its branch and rewrites its dependencies to the
+# sibling directories through `.lake/package-overrides.json`; the packages'
+# own manifests keep their exact-commit git pins. `.downstream/build.py .`
+# builds them in dependency order.
+
+[effects]
+url = "https://github.com/pure-algebra/lean4-effects"
+rev = "main"
+critical = true
+build_options = ["--wfail"]
+
+[hash]
+url = "https://github.com/pure-algebra/lean4-hash"
+rev = "main"
+critical = true
+build_options = ["--wfail"]
+
+[nlp]
+url = "https://github.com/pure-algebra/lean4-nlp"
+rev = "main"
+critical = true
+
+# The default build is red by design while a frozen breaker battery waits
+# for its builder (test/fixtures/trust-gate/known-red.txt there), so only the
+# production library is the downstream target; the repository's own CI runs
+# its trust self-test over the green remainder.
+[effect4]
+url = "https://github.com/pure-algebra/lean4-effect4"
+rev = "main"
+critical = true
+build_targets = ["Effect4"]
+build_options = ["--wfail"]
+
+[whatwg]
+url = "https://github.com/pure-algebra/lean4-whatwg"
+rev = "main"
+critical = true
+build_options = ["--wfail"]
