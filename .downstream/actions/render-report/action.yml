@@ -1,0 +1,61 @@
+name: Render report
+
+description: >
+  Generate a markdown report from the JSON build report produced by `build.py
+  --report`, and optionally the JSON status report produced by the
+  `statuses-get` action.
+
+inputs:
+  build-report-path:
+    description: Path to the JSON build report produced by `build.py --report`.
+    required: true
+
+  status-report-path:
+    description: >
+      Path to the JSON status report produced by the `statuses-get` action.
+      Required when report-type is "delta".
+
+  report-type:
+    description: >
+      "full" shows a table of all repos. "compact" shows a table of red repos
+      followed by the green repos in a spoiler. "delta" shows only repos that
+      recently changed color, per `status-report-path`.
+    default: full
+
+  report-style:
+    description: >
+      Markdown flavor to target. Controls the syntax used for the collapsible
+      section in a "compact" report.
+    default: github
+
+  limited-to:
+    description: >
+      Comma-separated list of repo names. If given, the report is restricted to
+      just these repos.
+
+  run-id:
+    description: >
+      The run ID to link to in the report. Defaults to the current workflow run,
+      which is wrong if this action runs in a workflow other than the one that
+      produced the report, e.g. one triggered by `workflow_run`.
+
+  run-attempt:
+    description: >
+      The run attempt to link to in the report. Defaults to the current workflow
+      run's attempt; see `run-id` for when to override it.
+
+  output-path:
+    description: If given, also write the markdown report to this path.
+
+outputs:
+  report:
+    description: The markdown report.
+
+  empty:
+    description: >
+      "true" if the report body is empty, e.g. a "delta" report where nothing
+      changed. "false" otherwise.
+
+runs:
+  using: node24
+  main: dist/index.js
