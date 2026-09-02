@@ -1,0 +1,11 @@
+name = "effects"
+version = "0.1.0"
+defaultTargets = ["Effects", "EffectsTest"]
+
+[[lean_lib]]
+name = "Effects"
+globs = ["Effects.*"]
+
+[[lean_lib]]
+name = "EffectsTest"
+globs = ["EffectsTest.*"]
