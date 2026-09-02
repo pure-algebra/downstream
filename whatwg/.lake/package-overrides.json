@@ -1,0 +1,25 @@
+{
+  "version": "1.2.0",
+  "packages": [
+    {
+      "type": "path",
+      "subDir": null,
+      "scope": "",
+      "name": "effects",
+      "manifestFile": "lake-manifest.json",
+      "inherited": false,
+      "configFile": "lakefile.toml",
+      "dir": "../effects"
+    },
+    {
+      "type": "path",
+      "subDir": null,
+      "scope": "",
+      "name": "hash",
+      "manifestFile": "lake-manifest.json",
+      "inherited": false,
+      "configFile": "lakefile.toml",
+      "dir": "../hash"
+    }
+  ]
+}
