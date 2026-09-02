@@ -45,4 +45,11 @@ jobs:
       # the reference repository derives its status from the report through
       # its status actions. Here the report's own verdict decides the job.
       - name: Fail unless every critical package is green
-        run: python3 -c "import json,sys; r=json.load(open('$RUNNER_TEMP/build-report.json')); print('green' if r['green'] else 'RED: ' + ', '.join(x['name'] for x in r['repos'] if x['critical'] and not x['green'])); sys.exit(0 if r['green'] else 1)"
+        run: |
+          python3 - <<'EOF'
+          import json, os, sys
+          report = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "build-report.json")))
+          red = [r["name"] for r in report["repos"] if r["critical"] and not r["green"]]
+          print("green" if report["green"] else "RED: " + ", ".join(red))
+          sys.exit(0 if report["green"] else 1)
+          EOF
