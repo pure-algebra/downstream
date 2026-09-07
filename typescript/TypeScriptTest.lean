@@ -1,0 +1,2 @@
+import TypeScriptTest.RenderSmoke
+import TypeScriptTest.StructureSmoke
