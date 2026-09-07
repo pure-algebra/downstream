@@ -4,14 +4,27 @@ Agents editing this worktree at the same time cannot message each other.
 This file is the channel. Read it before you write, and update your claims
 when you take or release a file.
 
-Last updated: 2026-09-02 (reorganization in progress: this repository becomes the single `whatwg` package per `docs/WHATWG-PACKAGE-PLAN.md`; lean4-hash finished at `0168306`; no other seat runs `lake` here until W3 lands).
+Last updated: 2026-09-06. `codex/streams-reification` (`3b7bdda`) and
+`codex/url-reification` (`43c0917`) are merged into `main` as `32aa2d0` and
+`1e00c4f`; the landing record is at the end of this file. W0–W5, HTML H0–H4,
+and the Infra integration repair at `319e744` are committed. P4a landed at `5121268` and P5a at `e4d053a`.
+P6a landed at `afb57f8`; P7a and its verified receipt landed at `6bb79d2`.
+The operator stopped further semantics formalization until more consumers
+exist. The separate P8a draft is held outside the approval submission.
 
 ## Who is active
 
 | Agent | Working on |
 | --- | --- |
-| Claude (coordinator) | reviews, commits, rulings, routers, PLAN, SPEC-MANIFEST, docs/*.md |
-| Claude (operator session, Mac) | `docs/WHATWG-PACKAGE-PLAN.md` slices W0–W5: the whole tree during the rename and the hash/effects requires; claims released per slice in the plan ledger |
+| Claude coordinator (main checkout, `main`) | Promise lane opened 2026-09-06 after the operator lifted the semantics hold: owns `COORDINATION.md`, `PLAN.md`, `SPEC-MANIFEST.md`, landings and gates; the only seat that runs `lake` in this checkout |
+| ECMA-262 and Web IDL survey seats | Landed: `docs/research/2026-09-06-ecma262-promise-census-survey.md` (77 rows proposed) and `docs/research/2026-09-06-webidl-promise-census-survey.md` (118 rows proposed, 197 Streams invocations joined) |
+| Promise plan seat (main checkout, docs only, no `lake`) | `docs/PROMISE-PACKAGE-PLAN.md`; the ES2026 and Web IDL section tables and seeded dispositions in `SPEC-MANIFEST.md`; new row kinds and coverage blocks in `docs/SPEC-COVERAGE.md`; `census/README.md`, `docs/research/README.md` |
+| Promise census breaker (landed) | Packet frozen RED at `37c2813` on `promise/census-breaker` (pushed): three contracts, three batteries, 121 Web IDL and 77 ES2026 anchor rows recomputed from the sealed bytes, the four existing projection files' digests frozen; statements and anchors remain breaker-owned |
+| Web IDL census builder (own worktree, `promise/webidl-census` from the packet) | Slice Q1 part 1: the R-P1/R-P8 profile refactor of `Gates/Census.lean`, the `webidl` standard, `census/webidl/*`, `generated/webidl-census.tsv`, the Web IDL and identity batteries green, one CI step; leaves the `.ecmarkup` dispatch as a single error branch |
+| ES2026 census builder (own worktree, `promise/ecma262-census` from the packet) | Slice Q1 part 2: `Gates/Ecmarkup.lean` as a pure scanner with its own battery, `census/ecma262/*`; wires the `ecma262` standard, projection and CI step only after the refactor is available (phase 2) |
+| Promise reviewer (landed) | Reviewed `a3857a4` against `910877c` and the frozen packet: all 198 rows recomputed from the sealed bytes with zero mismatches, freeze integrity and the four identity digests confirmed, every gate re-run; one blocker (two authority documents said no census existed; repaired at landing) and the Q2 debts D1–D11 below |
+| Q1 landing | Merged into `main` as `8ac0e6d` on 2026-09-07 with the blocker repair and R-P17 in the following commit; the seat table above is historical from here, and Q2 seats are claimed fresh |
+| Codex configuration breaker | Held: the P8a draft in `codex/configuration-breaker` stays unfrozen until the promise census and the DB-11 restatement exist |
 
 ## Current claims
 
@@ -20,6 +33,11 @@ row is unclaimed.
 
 | File or tree | Claimed by | State |
 | --- | --- | --- |
+| future P8 configuration contract and `docs/CONFIGURATION-DAG.md` design proposal | Codex configuration breaker (held), 2026-09-05 | Preserved in the separate `codex/configuration-breaker` worktree at checkpoint `6c44e08` plus uncommitted drafts. No further preparation, freeze, verification or integration while the operator's semantics deferral applies. Excluded from this submission. |
+| `test/contracts/piping-shutdown.contract.md`, declaration/source rows in `docs/PIPING-DAG.md`, piping batteries/witnesses and attack descriptions | Codex piping breaker (landed) | Frozen at `2f43183`, integrated as `ea03725`; statements and witnesses remain breaker-owned. All five P7 battery/witness modules are green; coordinator repair/status receipts remain separate. |
+| `test/contracts/transform-backpressure.contract.md`, declaration/anchor rows in `docs/TRANSFORM-DAG.md`, `WhatwgTest/Streams/Transform/**`, `WhatwgTest/Streams/Counterexamples/Transform/**`, transform attacks and attacked-statement/witness cells of `WS-TRANS-CE-*` | Codex transform breaker (landed) | P6a packet at `03547f1`, based on `5121268`, with two elaboration annotations at `c420aa9`; statements and witnesses remain breaker-owned. All four P6 batteries/witness modules are green. |
+| `test/contracts/writable-default.contract.md`, declaration/statement rows in `docs/WRITABLE-DAG.md`, `WhatwgTest/Streams/Writable/**`, `WhatwgTest/Streams/Counterexamples/Writable/**`, `test/counterexamples/writable/ATTACKS.md` | Codex writable breaker (landed) | Frozen base/lifecycle/exact packets integrated as `5669062`, `47a86da`, `5f7cebe`; statements and witnesses remain breaker-owned. All seven batteries and both witness modules are green. |
+| `test/contracts/readable-default.contract.md`, `WhatwgTest/Streams/Readable/**`, declaration/statement rows in `docs/READABLE-DAG.md`, `WhatwgTest/Streams/Counterexamples/Readable/**`, `test/counterexamples/readable/ATTACKS.md` | Codex P4 breaker (landed) | Frozen at `f4394d8`; retained ownership of statements and witnesses. Both batteries are green. Coordinator landing receipts and attack statuses are recorded separately. |
 | `test/contracts/queue-with-sizes.contract.md` | P3 breaker (landed) | frozen 2026-09-02; the builder may not edit it |
 | `WhatwgTest/Streams/Data/QueueContract.lean`, `WhatwgTest/Streams/Data/QueueAxiomReport.lean` | P3 breaker (landed) | frozen and RED; declared in `test/fixtures/trust-gate/known-red.txt`; the builder may repair elaboration only, never a statement |
 | `WhatwgTest/Streams/Counterexamples/Data/Queue.lean`, `test/counterexamples/data/ATTACKS.md`, the `WS-DATA-*` rows of `test/counterexamples/REGISTER.md` | P3 breaker (landed) | green; breaker-owned, retained after the repair |
@@ -30,6 +48,59 @@ one-shot builder (`a8f08d0`); the P1 census seat (`72b1bfd`); the P2 + P1.1
 seat (`c2b4497`); the S1.5–S1.7 seat (`a1383bc`); the P3 breaker seat (this
 merge). The worktrees `..\lean4-WHATWG-streams-p1`, `-s1`, and `-p3` are
 merged and unclaimed.
+
+The former HTML claim released at its committed landings `b163f53`,
+`047916b`, and `b4c825a`; the former W0–W5 hold released under the package
+plan's executed ledger. The P3 breaker rows above remain frozen ownership
+records; their old RED label is superseded by `docs/DATA-DAG.md`'s Landing
+receipt and the empty `known-red.txt` set.
+
+The Infra integration, hash-pin repair, and `WS-INFRA-CE-001` claims released
+at `319e744`, after the narrow proofs, full build, axiom receipt, executable
+gates, and independent review passed.
+
+The P4a implementation, host fixture, and coordinator receipt claims release
+with the accompanying implementation commit. The narrow 63-job and full
+260-job builds, R-11 audit, executable gates, and independent source/record
+reviews passed. `docs/READABLE-DAG.md` owns the exact commands and the open
+global/reachability/coverage obligations; full P4 remains open.
+
+The P5a implementation, host fixture, dependency-record cleanup, and coordinator
+receipt claims release with the accompanying implementation commit. All nine
+narrow modules (72 jobs), the full 275-job build, 111 theorem receipts, root
+audit, executable gates, and independent source/record reviews pass.
+`docs/WRITABLE-DAG.md` owns exact scope and commands. Full P5 remains open.
+
+The P6a implementation, host fixture, counterexample repair cells and
+coordinator receipt claims release with the accompanying implementation
+commit. All four narrow modules (71 jobs), the full 287-job build, 118
+theorem receipts, root audit, executable gates and independent source/proof
+review pass. `docs/TRANSFORM-DAG.md` owns exact commands and the remaining
+graph obligations. Full P6 remains open. At that landing the P7a breaker
+packet was being prepared in its separate worktree.
+
+The P7a production, root integration, counterexample repair/status and
+coordinator receipt claims release with the accompanying implementation
+commit. The 75-job narrow build, 298-job full build, all 46 theorem receipts,
+149-module/11780-declaration root audit, executable gates and independent
+source/proof/landing reviews pass. `docs/PIPING-DAG.md` owns the exact
+fragment judgment, commands and open edges. The two composed runs end at
+the request to finalize; full P7, progress, global M1/M2 and host embeddings
+remain open. The separate P8a packet remains unfrozen and unverified.
+
+The final review/status claim releases with the accompanying operator-hold
+commit. Standards and Spec reviewers independently inspected the full branch
+against main at `c1c7caa9b68ba4ff72ac379f4aedcc84385e5f28`; neither found an
+actionable issue within the submitted representatives. The coordinator
+rechecked the 298-job build, 149-module/11780-declaration root audit, vendor
+seal, citations, TyXML drift, Streams census/coverage and Infra census. All
+three existing harness scripts pass on Node v22.23.2, Windows x64, as finite
+host observations only. No new semantic declarations, WPT execution or
+host-to-Lean comparison were added during final review. Only this coordination
+record and the plan's operator hold changed after `6bb79d2`. The submission
+requests approval; it does not authorize a merge or resume the P8a draft.
+
+URL setup handoff (isolated `dbbf`, 2026-09-05): baseline repair and pinning claims released. The builder landing on `codex/url-reification` includes these changes; `git status` attributes any later work. `docs/URL-PACKAGE-PLAN.md` records files, commands, receipts, and the next census obligations. `INFRA-TEXT-CE-001` is closed; its three independently authored theorem statements in `WhatwgTest/Infra/Counterexamples/CommaSplit.lean` remain frozen. No agent or Lake subprocess from this handoff is left running.
 
 ## Collision record
 
@@ -42,3 +113,42 @@ Only the seat that holds a claim on a Lean tree runs `lake` in this checkout.
 Research seats measure in scratchpad packages; a second builder works in a
 git worktree on its own branch. The coordinator runs the gates only at
 landing, after the seat has reported and stopped.
+
+
+URL U2a handoff (2026-09-05): scanner, interface, projection, test integration, registry and graph claims released. Breaker packets at afcd91d, 4e4e880, 6db5ec2 and a60add5 remain frozen; all acceptance conditions are unchanged and now pass. The five URL-INV counterexamples are closed as finite tooling regressions. Independent review confirmed all repairs. Default build and all gates pass; the URL plan records commands, actual axiom output and open census edges. No agent or Lake subprocess from U2a remains running. The full URL reification goal and the coordinator's semantic-census claim remain active.
+
+URL U2b handoff (2026-09-05): join implementation, interface, source-review, test/root integration and register claims released. Breaker packets at `6fe8b5c` and `cb4cee5` remain frozen; all 67 original probes and both `URL-CEN-CE-001` refusals pass unchanged. Default build and repository gates pass. Independent review confirms the whitespace repair and the authored source span/explanation corrections. `docs/URL-PACKAGE-PLAN.md` records exact commands, axiom receipts, the constructive dependency baseline and open joins. No reviewer or Lake subprocess from this handoff remains running. The coordinator retains the source-census claim; full reification and the added choice-minimization objective remain active.
+
+Infra scalar constructive handoff (2026-09-05): proof, record, test/root and registry claims released. Frozen breaker `9cf3216` first rejected six transitive `Classical.choice` dependencies after all nine exact signatures elaborated. The builder changes only two helper proof bodies; all nine signatures and constructive receipts now pass unchanged, along with the default build and repository gates. Independent source and proof reviews pass. `docs/INFRA-SCALAR-ASSURANCE.md` records actual axioms and the remaining identity/coverage joins. No reviewer or Lake process remains running. The full URL goal and its choice-minimization objective remain active.
+
+URL U2c handoff (2026-09-05): authored reader, source projections, metadata and review/registry claims released. Frozen breaker commits `9e54535` and `4742678` remain unchanged; all 77 original assertions and five CR regression probes pass. `URL-INP-CE-001` is closed, and independent source/code reviews confirm the repairs. `lake build` (277 jobs; 134 modules, 7008 declarations), actual axiom receipts and all repository gates pass. Both URL source projections are generated by Lean, independently cross-checked and byte-identical after the repair. The URL plan records exact commands, file fence, source/output digests and open declaration/assurance/coverage joins. No reviewer or Lake process remains running. The coordinator retains the broader U2 claim; full reification and choice minimization remain active.
+
+User-requested stop (2026-09-05): integer constructive repair and broader URL coordinator claims released. Breaker `d755ba6` is frozen and unchanged; all nine range proofs now meet its constructive ceiling, with five unsigned proofs axiom-free and four signed proofs using only propext/Quot.sound. The default build (278 jobs; 135 modules, 7015 declarations), all gates and independent source/proof review pass. The builder starts from `8a2b608`; the landing commit is identified by Git history. `docs/INFRA-INTEGER-CONSTRUCTIVE.md` carries exact receipts; `docs/CHOICE-REMOVAL.md` records remaining core/string dependencies and the user stop. No toolchain patch/rebuild was started; no agent or Lake process remains running. Resume URL or choice-removal work only on a new user instruction.
+
+Main integration (2026-09-06, operator-directed): `codex/streams-reification` at `3b7bdda` merged into `main` as `32aa2d0` without conflict; `codex/url-reification` at `43c0917` merged as `1e00c4f`. The two branches shared base `c1c7caa` and conflicted only in `Whatwg/Infra.lean` (import order), `Whatwg/Infra/Text/Codec.lean` and `Order.lean` (proof bodies; the URL branch's constructive versions were kept, signatures unchanged), `WhatwgTest/Audit/SpecCoverage.lean` (the qualified `Gates.Census.streams` was kept), and four records (`COORDINATION.md`, `PLAN.md`, the counterexample register, `known-red.txt`), where both sides were retained. On the merged tree the production build (288 jobs), all eight gate executables including `census --standard infra`, and the test root (202 jobs) pass with no warnings; the root axiom gate checked 173 modules and 12270 declarations. The breaker branches `codex/readable-breaker`, `-writable-breaker`, `-transform-breaker` and `-piping-breaker` are subsumed by the streams landing (their tips differ from the integrated commits only in register status text). `codex/configuration-breaker` (`6c44e08` plus uncommitted P8 drafts) remains held and unmerged under the operator's semantics deferral.
+
+TyXML retirement (2026-09-06, operator-directed): TyXML only bootstrapped the shape of the HTML schema, so the pin `vendor/tyxml-d2916535/` (25 files), the projection `generated/tyxml-html-schema.tsv`, `Gates/TyxmlSchema.lean`, `Gates/TyxmlSchemaEmit.lean`, `bin/TyxmlSchema.lean`, the two OCaml cross-check scripts, the `tyxmlschema` Lake target and its CI step are removed, and the vendor manifest is regenerated. The four `Whatwg/Html/Schema/*.lean` modules are authored source from this date under the HTML Standard alone (HP-10 amended in `docs/HTML-PACKAGE-PLAN.md`); their headers, `Whatwg/Html.lean`, `SPEC-MANIFEST.md`, `docs/PROVENANCE.md`, `docs/ARCHITECTURE.md`, `README.md` and `Gates/AGENTS.md` record the change. Historical receipts that list `lake exe tyxmlschema` are left as written.
+
+Promise authority pins (2026-09-06, operator-directed): the Web IDL Standard (`whatwg/webidl` at `a652053f`, March 2026 Review Draft) and ECMA-262 (`tc39/ecma262` at `0248456c`, tag `es2026`) are sealed under `vendor/whatwg-webidl-a652053f/` and `vendor/ecma262-0248456c/`, three files each, blob-verified and recorded in `docs/PROVENANCE.md` and `SPEC-MANIFEST.md`; the vendor manifest is regenerated. This closes the authority gap the P8a contract names (ECMAScript and Web IDL promise algorithms were not sealed sources). No census, disposition, declaration or semantic work on either source is started; the operator's semantics hold still applies, and P8a remains held on `codex/configuration-breaker`.
+
+Promise layering ruling (2026-09-06, operator-directed): DB-11 in `docs/DESIGN-BASIS.md` places ECMA-262's promise objects and job queue in `Whatwg.Ecma262` and the Web IDL promise/exception vocabulary in `Whatwg.WebIdl`, both beneath `Whatwg.Streams`. The two roots and their four modules are declaration-free bootstraps imported from `Whatwg.lean`; Streams does not yet import them and its P4–P7 promise tables keep their owners. When P8a is unfrozen, its cell/token/registration obligations are restated against these owners first. `docs/ARCHITECTURE.md`, `docs/REIFICATION-STRATEGY.md` and `PLAN.md` record the ruling.
+
+Promise census rulings (coordinator, 2026-09-06, answering the two surveys' open decisions; the plan seat transcribes them into `SPEC-MANIFEST.md` and `docs/SPEC-COVERAGE.md`):
+- R-P1 Generator shape: `Gates.Census.Standard.definitionKeyed` becomes a source profile: a Bikeshed profile with per-scanner switches (`algorithmRows`, `definitionRows`, `idlRows`, `slotRows`, `requirementMarker`, `sectionScope`, heading levels) and an ecmarkup profile served by a new `Gates/Ecmarkup.lean` scanner. The CLI stays `lake exe census --standard <key>`. The Streams and Infra projections and rows modules must be byte-identical across the refactor; the breaker freezes that identity.
+- R-P2 Kinds: `Gates.Census.Kind` is extended (`builtin`, `hook`, `property`, `record`, `field`, `term`, `clause` for ES2026; Web IDL uses the existing kinds plus definition rows disambiguated by Bikeshed dfn type and `for`). Existing kinds and their spellings are unchanged.
+- R-P3 Ids: ES2026 row ids derive from clause ids with `.`, `%` and case preserved through an injective, documented escaping rather than the current `kebab`, which collides on `sec-promise.resolve` / `sec-promise-resolve`. Requirement bullets without ids are positional within their clause, guarded by the span digest.
+- R-P4 Web IDL scope: `idl-promise` (the type) is `hostOnly`; the promise operations in `js-promise` are `owned`, including `mark as handled` (unused by Streams at the pin; it stays an honest uncovered denominator row). The binding layer stays `hostOnly`. `scanSlots` is off for Web IDL; the promise internals it mentions are `Whatwg.Ecma262` dependency rows. Heading-borne definitions (`<h3 id=... interface>`) are definition rows. `rules.tsv` gains an optional end locator so the six derived-interface bullets get disjoint spans.
+- R-P5 ES2026 dispositions: the survey's proposal stands (44 owned, 13 foreignBoundary, 10 hostOnly, 7 requirement, 3 evidenceOnly) with one change: `HostEnqueuePromiseJob` and its ordering bullets are `requirement`, realized by the FIFO queue in `Whatwg.Ecma262.Jobs` under DB-03, the same specification/realizer pattern as `ReadableStreamPipeTo`. `HostEnqueueTimeoutJob` and `HostEnqueueGenericJob` are `foreignBoundary`. The promise instance slots are `owned` in this census while the Streams census keeps them `foreignBoundary`: the two censuses describe two libraries, and Streams' rows become references into `Whatwg.Ecma262` when P8 opens.
+- R-P6 Escaping references: each census carries `dependencies.tsv` and `externals.tsv` in the URL lane's format. Web IDL's escapes split into the `Whatwg.Ecma262` boundary (the exact P8 surface), Infra dependency rows, out-of-scope Web IDL sections as `hostOnly`, and HTML/DOM/realm machinery as externals. ES2026's escapes split into Completion Records, Abstract Closures and the object-model operations as a named ES2026 core boundary, and agents/realms/execution contexts as externals.
+- R-P7 Sequencing: breaker first (both contracts frozen red in one packet), then the Web IDL builder lands the profile refactor and the Web IDL standard, then the ES2026 builder lands the ecmarkup scanner (developed in parallel as a pure scanner with its own battery) and the `ecma262` standard on top of it, then independent review, then coordinator landing with all gates. Two CI steps are added, one per standard.
+- R-P8 (answering the plan seat, 2026-09-06): the Bikeshed profile gains an `algorithmNameFirst` switch, off for Streams and Infra (byte-neutral) and on for Web IDL, so operation rows are named from the `algorithm` attribute (`op.react`) rather than the dfn id. R-P1's switch list is read as including it.
+- R-P9 Completion Records: R-P6 fixes only where an escaping reference is recorded (a `dependencies.tsv` category), never a disposition. The completion discipline is reproduced by the model, as an `Except`-shaped result, and no in-scope row is `foreignBoundary` for a completion reason. The plan's reading is confirmed; Q3's acceptance condition stands.
+- R-P10 Web IDL exceptions: `idl-DOMException-derived-predefineds` is `hostOnly`. The base DOMException error names are one definition row per name, `owned` as data (the table `Whatwg.WebIdl.Exceptions` reserves), not one enumeration row. With the three heading-borne definitions of R-P4 the expected scoped Web IDL total is 121, not the survey's 118; the breaker freezes the count it recomputes.
+- R-P12 Extraction first (operator concern, 2026-09-06): the promise libraries are seeded by extraction from what Streams already has, never by fresh design. `Readable.PromiseState`, `Readable.Settlement`, `settlementTrace`, the id-keyed promise tables with `lookupPromise` / `freshPromise` / `settle` in Writable and Transform, the `Job` types with `runJob` and the proved `tick_job_fifo` laws, `notify` and subscriptions, and the P8a draft's `PromiseRef`, `Registration`, `ObserverPhase`, `JobKind`, `Job`, `Active`, `Event` and `active_episode_fifo_suffix` ascriptions are the seed of `Whatwg.Ecma262.Promise`, `Whatwg.Ecma262.Jobs` and `Whatwg.WebIdl.Promise`. Each existing declaration gets one of three reuse modes: move (the definition relocates and Streams keeps an `abbrev`, so every dependent proof is unchanged by definitional equality), generalize (the Streams definition becomes an instance of the general one with a bridging lemma, and its theorems are re-derived from the general law, not re-proved), or keep (stream-specific). An extraction inventory seat produces `docs/PROMISE-EXTRACTION-INVENTORY.md` before the Q3 breaker freezes anything; the Q3 contract cites that inventory row by row, and any Q3 ascription that duplicates an existing Streams declaration without naming its reuse mode is a defect.
+- R-P13 (answering `docs/PROMISE-EXTRACTION-INVENTORY.md`, signature decisions 1–5): `Whatwg.Ecma262.Promise.State` takes two type parameters, value and reason, exactly as `Readable.PromiseState α ε` does, and `Readable.PromiseState` becomes an `abbrev` of it (move). The reason parameter stays free: `Whatwg.Ecma262` imports only `Whatwg.Infra` under DB-11, and `Whatwg.WebIdl` instantiates it with the Web IDL exception type. Promise identities stay `Nat`, with the P8a draft's owner-qualified `PromiseRef` above them. The job queue is payload-polymorphic; the three Streams queues are its instances. Reuse mode is move for types and generalize for every function that appears in a `local simp` set, so no existing `simp` proof loses an equation lemma.
+- R-P14 `Boundary.Exception` (inventory E-59, 69 dependents): allocation identity is preserved in the general exception type; a Web IDL exception without identity cannot host the nested-size-callback distinctness witnesses. It is its own sub-slice inside Q3, landed last, after every other move has shown the P4–P7 batteries unchanged.
+- R-P15 Inventory decisions 6–9, 11 and 12 (collapsing `PullAnswer`/`PullReturn`, guard versus assertion for `settle`, one or two reaction lists, the shape of the handled record, ownership of the `wait for all` rows, and the timing of the Streams slot re-disposition) are the Q3 breaker's to propose in its contract with the inventory row cited; the coordinator ratifies at freeze.
+- R-P16 (ratifying the Web IDL builder's landing at `3aa19dd`, 2026-09-07): `algorithmNameFirst` lives on `Standard`, not on `Bikeshed`, because the frozen `Bikeshed.mk` ascription has eight arguments; it is inert at the Web IDL pin, where the eleven promise-operation blocks carry no attribute value, so the frozen ids (`op.dfn-perform-steps-once-promise-is-settled` and the like) stand and the survey's `op.react` spelling is not adopted. The three additional `Standard` fields (`authoredTypeNames`, `authoredDependencies`, `crossCensusPaths`) and the one import of each new rows module in `WhatwgTest.lean` (forced by the audit's module-closure gate) are accepted. The three ES2026 escapes that occur only in a row-less section are documented in the externals header rather than recorded, since the generator refuses an unused external.
+- R-P17 (landing ratification, 2026-09-07, after independent review of `a3857a4`): the Q1 census landing is accepted. R-P8's parenthetical `(op.react)` is retracted: at the Web IDL pin the eleven promise-operation blocks carry no `algorithm` value, the switch is inert, and the frozen ids (`op.dfn-perform-steps-once-promise-is-settled`, `op.waiting-for-all-promise`, `op.mark-a-promise-as-handled`) stand for the life of the census. The Web IDL contract's §8 sentence "the anchor itself is the first that many bytes of the span" is superseded by the ES2026 contract's §11 rule (an anchor is at least 24 bytes from the span start and may run past a short span; six landed rows do); the invariant the gates check is anchor-at-span-start, unique in the file. The Web IDL contract's §7 listing of three ECMA-262 identities as dependency rows is unsatisfiable under its own unused-external rule and the omission is ratified. Neither frozen contract's text is edited; this ruling is the amendment.
+- Review debts before Q2 (owner: coordinator unless named), from the same review: (D1) transcribe R-P8 to R-P17 into `SPEC-MANIFEST.md`, and fix its Web IDL table (the `idl-DOMException` cell's owned/hostOnly contradiction, the 25 const rows located in `idl-DOMException` not the error-names section, the names-table row) and its three stale ES2026 ids; (D2) correct the false reason for the three omitted externals in the Q1 Web IDL receipt and in the `census/webidl/externals.tsv` header comment; (D3) `DOMException`'s serialization and deserialization steps (bytes 675370–677113 of the Web IDL source) produce no row because they are `<ol>` lists, not algorithm blocks: Q2 adds authored `rule` rows or a recorded exclusion, with a contract amendment; (D4) two disposition challenges for Q2 ratification, `op.an-exception-was-thrown` (evidenceOnly, argued hostOnly) and `clause.promise-objects` (evidenceOnly, argued owned), each a contract-amended regeneration since the totals are frozen; (D5) `convert an IDL promise to a JavaScript value` has no row while its inverse does; (D6) scanner probes missing for the nameless-dfn and scan-cap refusals (ES2026 builder); (D7) `scanRules`' capped occurrence count and the unchecked end-locator uniqueness and `spanB < spanE` on the Bikeshed path; (D8) a `census/webidl/README.md`; (D9) the plan's "Still open" list and the ES2026 contract §11 histogram sentence; (D10) same-census `<emu-xref>` and bare `<a>` links are not recorded as dependencies; (D11) whether `docs/PROMISE-PACKAGE-PLAN.md` joins the citations gate's protected set.
+- R-P11 Escape groups R-P6 does not name (the iterator tape, intrinsics, error objects, the conventions record, the two out-of-lane hooks) are decided when `externals.tsv` is authored at Q2; none is reached by a Q3 row.

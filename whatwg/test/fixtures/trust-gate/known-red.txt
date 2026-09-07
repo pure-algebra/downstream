@@ -21,3 +21,73 @@
 # WhatwgTest.Streams.Data.QueueAxiomReport were red here while the names they
 # ascribe did not exist. The P3 builder seat landed that surface and removed
 # the two entries; no entry remains.
+
+# P4a default-readable representative, frozen 2026-09-05.
+# Packet: test/contracts/readable-default.contract.md.
+# Root/audit integration is the coordinator's separate landing change.
+# Both modules became green with the P4a implementation; no entries remain.
+
+# P5a base packet: 68fc922, integrated as 5669062 on 2026-09-05.
+# Lifecycle and exact in-flight addenda integrated as 47a86da and 5f7cebe.
+# All seven interface/law/receipt modules are green; no entries remain.
+
+# P6a transform/backpressure packet: 03547f1, integrated as 5d95212.
+# All 112 interface entries, 118 laws/receipts and retained witnesses are green.
+# The normal 71-job narrow build passes; no entries remain.
+
+# P7a forward-error shutdown packet: 2f43183, integrated as ea03725.
+# All sixteen witnesses, 98 interface entries, 44 laws and two runs are green.
+# All 46 named axiom receipts compile; no entries remain.
+
+# U2a URL source inventory, frozen 2026-09-05 by the independent breaker.
+# Packet: test/contracts/url-inventory.contract.md.
+# Green after scanner implementation; frozen battery remains imported by WhatwgTest.
+
+# U2a independent review witnesses URL-INV-CE-001 through URL-INV-CE-005.
+# Attack record: test/counterexamples/url/INVENTORY.md.
+# Green after scanner repairs; the ten frozen assertions remain in the test root.
+
+# U2b source-to-census assignment, frozen 2026-09-05 by the independent breaker.
+# Packet: test/contracts/url-census.contract.md.
+# Green after join implementation; all frozen assertions remain imported by WhatwgTest.
+
+# U2b independent review witness URL-CEN-CE-001.
+# Attack record: test/counterexamples/url/CENSUS.md.
+# Green after justification repair; the two frozen refusal assertions remain in the test root.
+
+# Infra scalar/Char constructive dependency witness INFRA-SCALAR-CE-001.
+# Packet: test/contracts/infra-scalar-constructive.contract.md.
+# Green after constructive proof repair; the exact signatures and axiom ceiling remain in the test root.
+
+# U2c authored census input and projection, frozen 2026-09-05 by the independent breaker.
+# Packet: test/contracts/url-census-input.contract.md.
+# Green after reader implementation; all frozen assertions remain imported by WhatwgTest.
+
+# U2c independent review witness URL-INP-CE-001.
+# Attack record: test/counterexamples/url/CENSUS-INPUT.md.
+# Green after preserving field CR bytes across the shared-parser handoff; all five probes retained.
+
+# Infra integer constructive dependency witness INFRA-INTEGER-CE-001.
+# Packet: test/contracts/infra-integer-constructive.contract.md.
+# Green after direct numeric bound proofs; all nine alias/signature/axiom checks retained.
+
+# Promise census packet, frozen 2026-09-06 by the promise census breaker seat.
+# Packets: test/contracts/census-profile-identity.contract.md,
+# test/contracts/webidl-census.contract.md, test/contracts/ecma262-census.contract.md.
+# Implementation fence: Gates/Census.lean (the R-P1 source profile, the R-P2
+# kinds, the R-P4 rules.tsv end locator, the webidl and ecma262 standards),
+# Gates/Ecmarkup.lean, census/webidl/**, census/ecma262/**, and the four
+# generated projections those two standards write. Each module below is red
+# only because the names it ascribes do not exist yet; the Web IDL and ECMA-262
+# projection gates additionally refuse because no standard is registered under
+# their key. The builder removes an entry the moment its battery is green.
+#
+# The Web IDL builder landed the R-P1 profile refactor, the R-P2 kinds, the
+# R-P4 end locator, the webidl standard and census/webidl/** on 2026-09-06, so
+# WhatwgTest.Audit.CensusProfileIdentity and
+# WhatwgTest.Audit.WebIdl.CensusContract are green and their two entries are
+# removed. WhatwgTest.Audit.Ecma262.CensusContract stayed red until the ES2026
+# builder landed Gates/Ecmarkup.lean, the ecmarkup dispatch arm of
+# Gates.Census.build and the ecma262 standard on 2026-09-07; that battery is
+# green and its entry is removed. No entry remains, so the trust gate's
+# all-green control is restored.

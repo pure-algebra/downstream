@@ -5,6 +5,16 @@
       "type": "path",
       "subDir": null,
       "scope": "",
+      "name": "typescript",
+      "manifestFile": "lake-manifest.json",
+      "inherited": false,
+      "configFile": "lakefile.toml",
+      "dir": "../typescript"
+    },
+    {
+      "type": "path",
+      "subDir": null,
+      "scope": "",
       "name": "effects",
       "manifestFile": "lake-manifest.json",
       "inherited": false,

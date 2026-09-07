@@ -1,6 +1,6 @@
 # lean4-whatwg
 
-WHATWG standards reified in Lean 4, one library per standard: `Whatwg.Streams`, the Streams Standard, and `Whatwg.Infra`, the Infra Standard (pinned, empty). The Streams library: the specification's
+WHATWG standards reified in Lean 4, one library per standard: `Whatwg.Streams`, the Streams Standard; `Whatwg.Infra`, the Infra Standard (pinned, empty); and `Whatwg.Html`, the HTML content model under the HTML Standard's authority, whose schema was bootstrapped from OCaml TyXML's row types and is authored source since 2026-09-06 (`docs/HTML-PACKAGE-PLAN.md`). The Streams library: the specification's
 algorithms and internal state as first-order Lean data with proved laws, a
 relational semantics over explicit decisions, an EffHOL-style logic layer
 above it, and, later, a checked lowering of a closed combinator alphabet to
@@ -31,17 +31,20 @@ checkout.
 lake build                       # libraries, the elaboration-time axiom gate, the gate executables
 lake exe vendorseal              # vendor/ against generated/vendor-manifest.tsv, both directions
 lake exe citations               # no line-numbered citation into a protected authored document
-lake exe trustselftest           # planted partial/unsafe/choice/sorry/native_decide/malformed/unreachable are each rejected
+lake exe urlinventory            # generated/url-source-inventory.tsv against a regeneration from the sealed URL source
+lake exe urlcensus               # the authored URL census and its source assignments against a regeneration
+lake exe census                  # the Streams census and coverage emit
+lake exe census --standard infra # the Infra definition census
+lake exe census --standard webidl # the Web IDL promise and exception census
+lake exe census --standard ecma262 # the ECMA-262 promise and job census
 ```
 
 Every gate is Lean. Shell files, where they exist, only orchestrate.
 
-While a frozen breaker battery waits for its builder, the modules listed in
-`test/fixtures/trust-gate/known-red.txt` are red by design and a plain
-`lake build` fails on exactly them. In that phase `lake exe trustselftest`
-is the deciding gate: it checks the declared set against the observed set in
-both directions, excises it, and runs the axiom gate on the green remainder.
-CI builds the production libraries and gate executables and then runs it.
+`lake exe trustselftest` (not a default target, not in CI) plants known
+violations in a throwaway copy and checks that the axiom gate rejects each;
+run it after changing the gate itself. The WP-7 rename-parity receipt was
+retired on 2026-09-03: it had proved what it was written to prove.
 
 ## Where to start
 
@@ -77,8 +80,13 @@ judgment, observation mask, theorem, assumptions, and remaining host boundary.
 
 ## Licensing of vendored material
 
-`vendor/whatwg-streams-b9ba9f49/` carries the WHATWG Streams Standard source
+`vendor/whatwg-html-746f2ede/` carries the HTML
+Standard source (CC-BY 4.0). `vendor/whatwg-streams-b9ba9f49/` carries the WHATWG Streams Standard source
 (CC-BY 4.0, with BSD-3-Clause for portions incorporated into source code) and
 its reference implementation (dual CC0 / MIT). `vendor/wpt-480fdfcd/` carries
-the Web Platform Tests `streams/` directory (BSD-3-Clause). Each tree keeps
-its upstream license file. Nothing under `vendor/` is edited.
+the Web Platform Tests `streams/` directory (BSD-3-Clause).
+`vendor/whatwg-webidl-a652053f/` carries the Web IDL Standard source (CC-BY
+4.0). `vendor/ecma262-0248456c/` carries the ECMAScript 2026 specification
+source under Ecma International's text copyright policy, read as a
+specification source and never redistributed as a derived document. Each tree
+keeps its upstream license file. Nothing under `vendor/` is edited.

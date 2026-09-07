@@ -3,6 +3,10 @@ import Gates.Sha256
 import Gates.VendorSeal
 import Gates.Citations
 import Gates.Census
+import Gates.Ecmarkup
+import Gates.UrlInventory
+import Gates.UrlCensus
+import Gates.UrlCensusInput
 import Gates.TrustSelfTest
 
 /-!
