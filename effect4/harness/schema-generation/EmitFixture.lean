@@ -1,4 +1,4 @@
-import Effect4.Target.TypeScript.Schema
+import Effect4.Codegen.Schema
 
 namespace Effect4Harness.SchemaGeneration
 
@@ -13,7 +13,7 @@ private def person : Representation :=
 private def personDocument : Document := Schema.document person
 
 private def fixture : String :=
-  (Target.TypeScript.Schema.generate? "PersonSchema" personDocument
+  (Codegen.Schema.generate? "PersonSchema" personDocument
     [ ("ada", .obj [("name", .str "Ada"), ("active", .bool true)])
     , ("prototypeData", .obj [("__proto__", .str "data")]) ]).getD ""
 

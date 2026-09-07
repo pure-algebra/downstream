@@ -1,9 +1,9 @@
-import Effect4.Target.TypeScript.EffectfulField
+import Effect4.Codegen.EffectfulField
 
 namespace Effect4.Harness.SchemaEffectfulField
 
 open Effect4
-open Effect4.Target.TypeScript
+open Effect4.Codegen
 
 private def spec : EffectfulFieldSpec :=
   { alphabet := ⟨7⟩, readOperation := ⟨11⟩, writeOperation := ⟨12⟩ }
@@ -38,7 +38,7 @@ private def request : EffectfulField.Request :=
     write := writeBinding }
 
 def generate : IO Unit :=
-  match EffectfulField.generate? request house0 with
+  match EffectfulField.generate? request TypeScript.house0 with
   | some source => IO.print source
   | none => throw <| IO.userError "effectful-field request was refused"
 

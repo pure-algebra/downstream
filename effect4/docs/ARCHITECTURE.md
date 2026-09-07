@@ -3,76 +3,113 @@
 ## Dependency direction
 
 ```text
-Effects (external package: signatures, programs, handlers, laws)
-  -> first-order data and rows
-  -> checked flow
-  -> operational/relational semantics
-  -> logic and classification
-  -> portable protocol and typed targets
-  -> host conformance harnesses
+effects (external: signatures, programs, laws)      typescript (external: syntax, rendering)
+        |                                                    |
+Data (Row, Json, Optic, Ascii)      Machine (Cause, Exit, FiberId, supervision vocabulary, ServiceKey)
+        |                        |                          |                              |
+Machine: the frame alphabet (Prim, PrimInterp, FrameFiber) and the Scope state machine
+        |
+Machine: the fiber machine over the frames; its stores; Context and Layer models; clauses; witnesses
+        |
+Program: Eff (the program IR), typing, printer, native alphabet, compile to frames
+        |
+Api: the application face (type, print, compile, run; Schema syntax)
 
-Schema ---------> checked values, transforms, target codecs
-Context/Service -> requirements and environments
-Layer ----------> scoped environment construction
-Runtime --------> interpretation and managed ownership
-Fiber ----------> scheduler/interruption/resource lifecycle
+Schema (carrier, annotations, checker, authoring) -> Codegen (profile, Schema generation)
+Store (Val, one byte codec, Canonical, Kind, Ref, node, store, word, traits) -> Arch (views as Schema documents), StdLib (rc.112 export census)
+                                      -> Surface (entities, HTTP API, MCP agent, deployment, site), Char
+
+OCaml5 (lake library, src/OCaml5): the OCaml 5 / js_of_ocaml runtime model, the OCaml
+language model, library carriers, the LCNF backend, the Machine descriptions; imports
+Effect4.Machine and Effect4.Api, nothing imports it   ->   ocaml/ (the dune workspace)
+
+Tools (lake library, tools/Tools): Effect4-side --run drivers over Program,
+Codegen, OCaml5.Eff.World and Test.Program.Gen; no library imports them
 ```
 
-Effect4 depends on the `Effects` package for its algebra and on nothing else. Effect4 has no dependency on Foldlab. Foldlab's later adapter depends on the
-public Effect4 algebra and proves compatibility with its existing CAS-specific
-types and observations.
+Arrows point from what is imported to what imports it. `Api` imports the
+Program and Schema faces; callers and selected batteries import `Api`; `Machine` never imports
+`Program`; `Schema` never imports `Machine`. The external packages are pinned
+by exact commit in `lakefile.toml` (`effects`, `typescript`, and `hash` for the
+store's SHA-256). Effect4 depends on them, never conversely, and re-declares
+none of their carriers.
 
-## Planned source tree
+## Source tree
 
-| Area | Public responsibility |
+| Area | Responsibility |
 | --- | --- |
-| (`Effects.Algebra`, from lean4-effects `v0.1.0` (`5611c3a`)) | indexed signatures, free programs, handlers, interpreters, morphisms and laws; consumed through the pinned `effects` dependency, never re-declared here |
-| `Effect4/Data` | finite rows, IDs, canonical forms, typed values and shared codecs |
-| `Effect4/Flow` | raw and checked first-order graphs, blocks, regions, decisions and admission |
-| `Effect4/Semantics` | cause/exit, configurations, steps, runs, approximations, observations and logic |
-| `Effect4/Schema` | decoded/encoded/representation types, codecs, refinements, transformations and portability |
-| `Effect4/Context` | stable keys, service requirements and environments |
-| `Effect4/Layer` | dependency graphs, acquisition, provision, composition and scoped release |
-| `Effect4/Runtime` | interpreters, scopes, managed runtimes and execution boundaries |
-| `Effect4/Concurrency` | fibers, scheduling, interruption, races and supervision |
-| `Effect4/Stateful` | Ref, Deferred, Queue and coordination primitives |
-| `Effect4/Channel` | Channel/Stream/Sink/Pull/Take calculi and embeddings |
-| `Effect4/Schedule` | pure recurrence descriptions and effectful stepping boundaries |
-| `Effect4/Transaction` | atomic read/write/retry/orElse/commit calculus |
-| `Effect4/Classification` | independent domains, concretizations, transfers, products and fixpoints |
-| `Effect4/Protocol` | portable IDs, profile admission and canonical protocol bytes |
-| `Effect4/Target/TypeScript` | typed target IR, lowering, rendering, decoding, simulation and Effect v4 profile |
-| `Effect4/Meta` | environment extensions, declaration introspection, derivation and deterministic emitters |
-| `Effect4/Audit` | axiom receipts, declaration snapshots, per-type closure and cutover refusal |
+| `src/Effect4/Data` | requirement rows, JSON, lawful optics |
+| `src/Effect4/Machine` (`Cause.lean`, `Exit.lean`) | `Cause` and `Exit`, the error channel everywhere |
+| `src/Effect4/Machine` (`Fiber.lean`, `Supervision.lean`) | `FiberId`; the fork, observer, scope and race vocabulary the machine speaks |
+| `src/Effect4/Machine` (`Completion.lean`) | the external answer data and Ref key, below both the scheduler and stores |
+| `src/Effect4/Machine` (`Key.lean`) | `ServiceKey`, its universe and transport |
+| `src/Effect4/Machine` (`Frames.lean`, `Scope*.lean`, `LiveStack.lean`) | the rc.112 frame alphabet and single-fiber step, the `Scope` state machine, and the frame-level facts that pin them (`LiveStack`, `ScopeRestoration`) |
+| `src/Effect4/Machine` (`Fibers.lean`, `Stores.lean`, `Context.lean`, `Layer.lean`, `Clauses.lean`, `Witnesses.lean`) | the reference fiber machine (`RunMachine`, `drive`, `replayEval`, `runSyncExit`), the stores, the Context and Layer models, the clause theorems and the witnesses |
+| `src/Effect4/Machine` (`Approximation.lean`, `Behaviour.lean`, `Scheduling.lean`) | resumable fuel laws and stopping receipts; exits-and-stores observations at sufficient budgets; finite fairness under valid queued owners and sufficient command fuel |
+| `src/Effect4/Program` | `Eff`, `typeOf`, the native operation alphabet, `compile` and `interpOf`; `Provision` — the requirement algebra (`Row.diff`), the layer signature `LayerTy` and its laws, the layer term `LayerTerm` with `Eff` bodies, `App` (`Effect.provide`), the build specification and its totality theorem, and the lowering into the Layer machine (`docs/research/2026-09-04-provision-algebra.md` (untracked working note)); `Config` — rc.112's `ConfigProvider` as a fallback monoid under a path-transformation action, the `Config` reader with its tri-state resolution, dotenv substitution with fuel, and the configuration requirement row (`docs/research/2026-09-04-production-standards-spike.md` (untracked working note)) |
+| `src/Effect4/Api` | the one application-facing module |
+| `src/Effect4/Program` (`Sched.lean`, `DenoteR.lean`, `InterpR.lean`, `EvaluateR.lean`, `RuntimeR.lean`) | the term scheduler's first-order operation signature, bounded denotation and control erasure; term state, direct synthesized-program denotations and local evaluator instantiated on the existing machine loop; internal replay and observations, with general frame/term simulation still owed |
+| `src/Effect4/Schema` | the persisted Schema data plane |
+| `src/Effect4/Codegen`, `src/Effect4/Ingest` | the pinned Effect v4 profile, `print`, the Schema and annotated-field generators and the surface emitters; the readers that go the other way |
+| `src/Effect4/Store`, `src/Effect4/Arch`, `src/Effect4/StdLib`, `src/Effect4/Evidence` | the content-addressed store as one trait (`docs/research/2026-09-04-cas-trait-plan.md` (untracked working note)): `Val` the value tree and its one exact byte codec, `Canonical α` (shape, `toVal`, `ofVal`, three laws) with `encode`, `decode`, `digest`, the JSON printer and the spec `Document` all derived, `Kind` and the typed `Ref α`, the node `version ∷ kind ∷ spec ∷ payload` with the meta-schema as the zero-spec genesis, the heterogeneous store with admission and roots, words with closure, the layered read, the outbox and `verify`, and traits as `annotation` nodes that never enter identity; instances are generated by `tools/Effect4Gen` into `Store/Derived/*`, `Program/Derived.lean`, `Store/PinDerived.lean` and `StdLib/Derived.lean`. Then architecture and surface views as schema nodes, and the rc.112 export census (`StdLib`, 1,861 nodes under the root `stdlib/rc112`) with its links to the model |
+| `src/Effect4/Surface`, `src/Effect4/Char` | surface carriers; characterized components; `Surface/Middleware` and `Surface/Provision` are the joins of the surface carriers to the provision algebra (an HTTP middleware as a requirement transformer, a deployment as a closed layer) and are the one place `Surface` imports `Program` |
+| `src/OCaml5` | the Lean half of the OCaml estate: the OCaml 5 handler machine and its theorems, the jsoo machine, the OCaml language model (`Ml`), library carriers (`Lib`), the LCNF → OCaml backend (`Lcnf`), the Machine carriers described and rendered (`Render`, `Derived`), the route-1 bridge (`Bridge`), the `--run` drivers (`Tools`) |
+| `tools/Tools` | the Effect4-side `--run` drivers (lake library `Tools`): `TsGen`, the TypeScript estate's generated files (schemas, JSON writers, the profile) from the closed world `OCaml5.Eff.World` reads off the environment; `Corpus`, the printed corpus with `Api.roundTrip` beside each program; a sibling root of `Effect4`, outside the gate, imported by nothing |
+| `ocaml/` | the OCaml estate as one dune workspace: the avatar (the Machine as OCaml 5 handlers), the daemon `effect4d`, the route-1 link and host core, the LCNF route's generated machine, and the `Eff` IR as an OCaml library (`ocaml/README.md`) |
+| `ts/eff` | the `Eff` IR as a TypeScript library (bun): `read.ts`, the one hand-written function (oxc's tree into the printer's fragment, then `Codegen/Read.lean` ported clause for clause, one reader per head); `eff.gen.ts`, `json.gen.ts`, `profile.gen.ts`, the Schema nodes, their JSON and the profile (heads, and each native operation with its `Row`, as nodes) generated by `Tools.TsGen` from the same closed world as `ocaml/eff`; gates `check-ts-eff.sh` (drift) and `check-ts-eff-corpus.sh` (against `Api.roundTrip` over the corpus `Tools.Corpus` writes) in the sweep |
+| `harness/schema-host` | locked rc.112 / TypeScript / effect-tsgo test installation for the Schema gates |
+| `harness/truth` | the Lean-vs-rc.112 exit differential over the program corpus (bun) |
 
-Tests mirror these areas under `Effect4Test/`. Durable attacks live under
-`Effect4Test/Counterexamples/`, while their stable registry and algebraic
-contracts live under `test/`.
+Tests mirror these areas under `Test/`; durable attacks live under
+`Test/Counterexamples/` with their stable IDs in
+`Test/Counterexamples/REGISTER.md` and their contracts under `Test/contracts/`.
 
-## Public API principles
+## The OCaml estate
 
-The public API exposes small semantic objects and strong composition:
+Two runtimes exist on purpose. The *visible machine* is the Lean `RunMachine` running in
+OCaml — compiled Lean held as an opaque value (`ocaml/link`), or Lean's compiler IR
+translated to typed OCaml (`ocaml/gen`) — so every fiber, frame and park token is a field
+of one value that can be inspected, serialised and messaged through the model's own
+decision alphabet. The *avatar* (`ocaml/avatar`) is the same machine as OCaml 5 effect
+handlers with the frame stack on the OCaml stack: fast, effects-native, never one-for-one,
+and held to the Lean model by the witness report, the corpus differential against rc.112,
+and the projection guard between its hand descriptions and the descriptions derived from
+the environment. The daemon (`ocaml/server`) serves the avatar on three hosts from one
+module list; `ocaml/eff` is `Eff` as an OCaml language whose bytes the Lean decoder accepts
+exactly. Everything under `ocaml/` is held to `ocaml/STANDARDS.md`.
 
-- operations are indexed by their answer type;
-- programs are abstract behind constructors and folds;
-- handlers expose interpretation and composition laws, not representation;
-- checked graphs expose erasure and certified observations, not unchecked
-  internal tables;
-- Schema exposes both encoded and decoded views and the laws connecting them;
-- services expose keys and requirements, while layers own construction and
-  cleanup;
-- runtimes eliminate effect programs but never become canonical program data;
-- metaprogramming emits first-order declarations and digests, never stores raw
-  `Lean.Expr` as semantic content.
+## The seam
 
-## Observation faces
+`Effect4.Api` exposes the operations of
+the program pipeline. Callers cross this seam; batteries also test modules
+at their own boundaries. Surface construction uses the carrier modules under
+`Effect4.Surface`. Program printers answer syntax (`TypeScript.Expr`, `ConstDecl`). The explicit
+`render` operation crosses to bytes through `Codegen.Artefact.render`; it and
+text-producing generators such as `Codegen.Schema.generate?` are admitted by
+exact name in the axiom gate.
 
-The library keeps four faces distinct:
+Inside the seam the library keeps its faces distinct and relates them by
+theorem: structural syntax (`Eff`) for construction and printing; the frame
+alphabet for what rc.112 evaluates; the machine's relational meaning over
+explicit decision tapes, with `replayEval` as its fuel-bounded simulator; and
+the executable witnesses and host receipts as bounded evidence. No bounded
+runner is promoted into the meaning merely because it executes.
 
-1. structural syntax for induction and construction;
-2. first-order checked flow for identity, cycles, sharing, and generation;
-3. relational big-step/small-step meaning for arbitrary choices;
-4. executable bounded runners and host harnesses for decidable evidence.
+The scheduler records accept code, saved-state and frame-event parameters.
+`FiberCore` and `FiberEvaluator` are interpretation parameters, with the original
+frame machine as the default instance. This shares the command loop without
+changing `Eff` as canonical program content. An algebra-carrier integration
+fixture exercises the same loop; the later term evaluator and simulation remain
+outside this slice. The decision tape carries Completion data at every instance.
 
-Theorems relate these faces explicitly. No bounded runner is promoted into the
-denotation merely because it executes.
+## What is not here
+
+The Flow route — the Effects-flow language and runner, the region and frame
+simulations, the TypeScript flow lowering, the store families and their trace
+harness — is at `606918e` in main's history and on the pushed branch
+`archive/flow-route`.
+`Codegen/Print.lean` and `Codegen/Read.lean` retain the `Effect4.Program`
+namespace: they operate on `Eff`, while rendered syntax lives with its target.
+Shared demo carriers stay beside the library guards that use them; module-local
+examples are private. The axiom gate keeps its ownership lookup independent
+of the battery support module it audits.

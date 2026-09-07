@@ -1,18 +1,115 @@
 name = "effect4"
 version = "0.1.0"
-defaultTargets = ["Effect4", "Effect4Test"]
+# `Test`, not the red-inclusive glob: the umbrella `Test.All` plus exactly its transitive
+# imports is the green battery and the gate. A module declared red in
+# `Test/fixtures/trust-gate/known-red.txt` is deliberately not imported by `Test/All.lean`,
+# so it stays out of the default build and `#effect4_axiom_gate` actually runs in it.
+defaultTargets = ["Effect4", "Test"]
 
+# Every Lean process of this package is capped at 6 GB (`lean --memory`): a runaway
+# elaboration aborts with "memory limit exceeded" instead of taking the machine down
+# (docs/research/2026-09-04-s3-volume-plan.md, memory rule).
 [[lean_lib]]
 name = "Effect4"
+srcDir = "src"
 globs = ["Effect4.*"]
+moreLeanArgs = ["-M6144"]
+
+# The OCaml estate's Lean half (ocaml/README.md): the OCaml 5 / js_of_ocaml runtime
+# reification and its theorems, the OCaml language model (`OCaml5.Ml`), the library
+# carriers (`OCaml5.Lib`), the LCNF→OCaml backend (`OCaml5.Lcnf`), the avatar's descriptions
+# and their derived twins (`OCaml5.Avatar`), the `Eff` IR emitters (`OCaml5.Eff`), the route-1 bridge (`OCaml5.Bridge`, `@[export]`ed for
+# ocaml/link), and the `--run` drivers under `OCaml5.Tools`. The root module imports every
+# library module; the drivers (`Tools.*`, and the two batteries `Fuzz` and `MlTest`) each
+# declare a top-level `main`, so they are globbed separately rather than imported together.
+[[lean_lib]]
+name = "OCaml5"
+srcDir = "src"
+roots = ["OCaml5"]
+globs = ["OCaml5", "OCaml5.MlTest", "OCaml5.Tools.+"]
+moreLeanArgs = ["-M6144"]
+
+# The generator of `Canonical` instances and its projection guard
+# (docs/research/2026-09-04-cas-trait-plan.md §4): `--run` tools over `Lean.Meta`, not part
+# of any audited library; the emitted files carry their own receipts.
+[[lean_lib]]
+name = "Effect4Gen"
+srcDir = "tools"
+roots = ["Effect4Gen.Main", "Effect4Gen.Check"]
+moreLeanArgs = ["-M6144"]
+
+# The Effect4-side `--run` drivers (`tools/Tools/`): thin `main`s over library modules that
+# cross to bytes — `Tools.TsGen`, the TypeScript estate's generated files (schemas, JSON
+# writers, the profile) from the closed world `OCaml5.Eff.World` reads, and `Tools.Corpus`,
+# the printed corpus with Lean's round-trip beside each program. A tool is `IO` over the
+# library and is not the library: the root `Tools` is a sibling of `Effect4`, outside the
+# axiom gate's `Effect4.*` / `Test.*` audit and imported by nothing. `lake build Tools`
+# type-checks the drivers so they cannot rot; `lake env lean -M4096 --run tools/Tools/<X>.lean …`
+# runs one. The OCaml estate's drivers stay under `OCaml5.Tools`.
+[[lean_lib]]
+name = "Tools"
+srcDir = "tools"
+globs = ["Tools.+"]
+moreLeanArgs = ["-M6144"]
+
+# The green battery: the audit root and its import closure.
+[[lean_lib]]
+name = "Test"
+# The import-only root reaches Test.All. Owning the root makes every Test import
+# buildable on a fresh checkout without globbing the intentionally red batteries.
+roots = ["Test"]
+globs = ["Test"]
+moreLeanArgs = ["-M6144"]
+
+# The five independently green area batteries; a narrow sweep is
+# `lake build TestSchema` rather than a whole-tree build. The globs are `.+`,
+# submodules only: `.*` would also select the directory's own module, which
+# does not exist.
 
 [[lean_lib]]
-name = "Effect4Test"
-globs = ["Effect4Test.*"]
+name = "TestSchema"
+globs = ["Test.Schema.+"]
+moreLeanArgs = ["-M6144"]
 
-# The generic effect algebra. Exact commit of tag v0.1.0 of mepuka/lean4-effects;
-# docs/EFFECTS-SPLIT-PLAN.md records the split and its parity receipt.
+[[lean_lib]]
+name = "TestProgram"
+globs = ["Test.Program.+"]
+moreLeanArgs = ["-M6144"]
+
+[[lean_lib]]
+name = "TestMachine"
+globs = ["Test.Machine.+"]
+moreLeanArgs = ["-M6144"]
+
+[[lean_lib]]
+name = "TestCodegen"
+globs = ["Test.Codegen.+"]
+moreLeanArgs = ["-M6144"]
+
+[[lean_lib]]
+name = "TestStore"
+globs = ["Test.Store.+"]
+moreLeanArgs = ["-M6144"]
+
+# The generic effect algebra, morphisms, transport, families, and the shared trace
+# alphabet. Exact commit of tag v0.8.0 of pure-algebra/lean4-effects.
 [[require]]
 name = "effects"
 git = "https://github.com/pure-algebra/lean4-effects"
-rev = "5611c3a3cd4cd4b830c76d6c25c7dba6034c973a"
+rev = "a4ee7a14248ee5976039b73039319efa87834986"
+
+# TypeScript as a target: syntax, renderer, identifier profile, host pins.
+# Exact commit of v0.5.0 of pure-algebra/lean4-typescript (`Expr.generator`, `Expr.cond`,
+# `Expr.arrowBlock`, the formers the Eff printer needs).
+[[require]]
+name = "typescript"
+git = "https://github.com/pure-algebra/lean4-typescript"
+rev = "71bad1252ee8a1b243ed283320ededcb7d0a93c4"
+
+# Proved SHA-256 for content addresses (src/Effect4/Store/Digest.lean): exact commit of
+# pure-algebra/lean4-hash main. Its SHA-256 family is audited at zero declarations
+# reaching Classical.choice, so a digest stays inside this tree's axiom ceiling.
+[[require]]
+name = "hash"
+git = "https://github.com/pure-algebra/lean4-hash"
+rev = "c906b15dc3e94ebac0c10056270fbb345a1d2b6e"

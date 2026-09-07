@@ -1,6 +1,0 @@
-namespace Effect4.Target.TypeScript.EffectfulField
-
-noncomputable def plantedUnadmittedChoice : Nat :=
-  Classical.choice (inferInstance : Nonempty Nat)
-
-end Effect4.Target.TypeScript.EffectfulField

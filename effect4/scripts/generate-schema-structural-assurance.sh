@@ -1,71 +1,90 @@
 #!/usr/bin/env bash
 # Deterministic join for the implemented structural Schema proof graph shares.
+# Input pins re-recorded after the 2026-09-05 citation-only cleanup; declarations
+# and contract obligations are unchanged. Regeneration runs every receipt below.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 generator_rel="scripts/generate-schema-structural-assurance.sh"
-assurance_rel="Effect4Test/Schema/StructuralAssurance.lean"
-axiom_report_rel="Effect4Test/Schema/AxiomReport.lean"
-surface_rel="Effect4Test/Schema/PayloadSurface.lean"
+assurance_rel="Test/Schema/StructuralAssurance.lean"
+axiom_report_rel="Test/Schema/AxiomReport.lean"
+surface_rel="Test/Schema/PayloadSurface.lean"
 pin_rel="vendor/effect-4.0.0-rc.112/src/SchemaRepresentation.ts"
-register_rel="test/counterexamples/REGISTER.md"
-attacks_rel="test/counterexamples/schema/ATTACKS.md"
-recursor_attack_rel="Effect4Test/Counterexamples/Schema/RecursiveElimination.lean"
-annotation_attack_rel="Effect4Test/Counterexamples/Schema/AnnotationDataPlane.lean"
+register_rel="Test/Counterexamples/REGISTER.md"
+attacks_rel="Test/Counterexamples/Schema/ATTACKS.md"
+recursor_attack_rel="Test/Counterexamples/Schema/RecursiveElimination.lean"
+annotation_attack_rel="Test/Counterexamples/Schema/AnnotationDataPlane.lean"
 annotation_gate_rel="scripts/check-schema-annotations.sh"
+effectful_attack_rel="Test/Counterexamples/Schema/EffectfulField.lean"
+effectful_properties_attack_rel="Test/Counterexamples/Schema/EffectfulFieldProperties.lean"
+effectful_gate_rel="scripts/check-schema-effectful-field.sh"
 
 source_rels=(
-  Effect4/Data/Optic.lean
-  Effect4/Data/Json.lean
-  Effect4/Schema/Payload.lean
-  Effect4/Schema/Representation.lean
-  Effect4/Schema/Annotations.lean
-  Effect4/Schema/Document.lean
-  Effect4/Schema/Check.lean
+  src/Effect4/Data/Optic.lean
+  src/Effect4/Data/Json.lean
+  src/Effect4/Schema/Payload.lean
+  src/Effect4/Schema/Representation.lean
+  src/Effect4/Schema/Annotations.lean
+  src/Effect4/Schema/Document.lean
+  src/Effect4/Schema/Check.lean
+  src/Effect4/Codegen/Schema.lean
+  src/Effect4/Schema/EffectfulField.lean
 )
 contract_rels=(
-  test/contracts/schema-representation.contract.md
-  test/contracts/schema-subalphabets.contract.md
-  test/contracts/schema-payload.contract.md
-  test/contracts/schema-recursor.contract.md
-  test/contracts/schema-annotations.contract.md
+  Test/contracts/schema-representation.contract.md
+  Test/contracts/schema-subalphabets.contract.md
+  Test/contracts/schema-payload.contract.md
+  Test/contracts/schema-recursor.contract.md
+  Test/contracts/schema-annotations.contract.md
+  Test/contracts/schema-effectful-field.contract.md
+  Test/contracts/schema-effectful-field-properties.contract.md
 )
 battery_rels=(
-  Effect4Test/Schema/RepresentationContract.lean
-  Effect4Test/Schema/SubAlphabetContract.lean
-  Effect4Test/Schema/PayloadContract.lean
-  Effect4Test/Schema/RepresentationFoldContract.lean
-  Effect4Test/Data/OpticContract.lean
-  Effect4Test/Schema/AnnotationDataPlaneContract.lean
+  Test/Schema/RepresentationContract.lean
+  Test/Schema/SubAlphabetContract.lean
+  Test/Schema/PayloadContract.lean
+  Test/Schema/RepresentationFoldContract.lean
+  Test/Data/OpticContract.lean
+  Test/Schema/AnnotationDataPlaneContract.lean
+  Test/Schema/EffectfulFieldContract.lean
+  Test/Schema/EffectfulFieldPropertiesContract.lean
 )
 
 expected_source_shas=(
-  f9f879a3e3e99052e41fa43f76eb290a664f3280bc6897e95713b0bfdbcc826a
-  8714c8fbb3a3e3ba3bee94ed392bc32abe5367e9a468f5c0817e86d01926d330
+  0a02907cd4e994ff180c2d11b090f7948481dc888812d85bdb892fb7c0adf78f
+  aedfb6ccf23396bc817a9d722a8319c76d13206a06679fcb6941af20c33f7e6e
   77dc812193a79c389d2a69e4ce3f6a3461c966e6487b273ae673258e4b65d18e
-  66993fc8cee115e3869cc75dd66c0f337d31e4671d12cdd40e56ee44c5a52306
-  07f19339d44e088437611dd6a5efd4c1fc6d6d23a17b2d2763cd69fa0a67b9dd
-  e3337eb9f228d09ec0a511e0b4120743f25f95ab15a246b5ee1dbf1f5c735551
-  98439bbd47195d266a188345dc749fbd9aa11bb1499d2944476dde78c8c2a9ef
+  4a24b87cb4e164a68ddb91b21fb495a0d8c9cdc7c9d6d28f0318efc5145c692c
+  94fdb0e002c79fbaddd00f862f184f822373a0d33dda947ecb85443b3bd2beb7
+  bb21ae7f9d2ed9a51305376f6d8050704455f85f323b43448f93ce229e06cefd
+  cf63447dc0c7a4a7899e1806992e9e4ab82079ee9a9fd0d00bb49089ff524592
+  635eda65903c35d9d3f6efe75d9626065be4c44773b72ffb4c66cf8b1a7f9513
+  2c54ef3ce3f1a60442b40c5cffe7bf850bd1bdc669cd7a6915bc9dd7666052b9
 )
 expected_contract_shas=(
-  a2b85dd7ce72a8f74abfedeccb1142d7a85fa9913820fa8412c1410489ab90ee
-  1b3d298d732be54c47108dafe914639bb5167eecc1d6b3dd27d50591fed65555
-  aa7d193d778cbc8e1c6ddb616d14ed7fc856889178d201439a4e36f550000f89
-  c70ff82cf5b55e18516e78db1f6720441920225390ad90e99e3e3c2dd115a4d3
-  0414c65d3c1120d6be286d79a7cdd7b0334e97517604dde60795b9f9813726f8
+  4eae40b849ef18e910bf404715203571bf93e38a0daffefa64b2a2877cb36ff8
+  71a13678df38c08f9f6396b3b623b7ab227645019e9794371cb2144d14fd5e55
+  352b87a75767a89e52da18e4df8c58f4059646e02be60f7fc55bbaecaa45310a
+  3069714f714268ecac1be87d73f029ccab725623f285344f01a42e07fd6b201a
+  ca44fbb7613b9453ece6bd3de4d318edbce2d83ffc1ec0d1c3648178ba9e53a7
+  b232dba0e24333277927765528ccd30ed71014bd9a8256f6a41abbe97a6d1ea4
+  407adca2a7ff3df00bafe4ee87c4af0e9aae7a84b4f181e4ace86364139fae51
 )
 expected_battery_shas=(
-  fed90a2b7174a41546003dc77f248d8838935fd4ecef707e868a4705f85bcd61
-  a57ed694dabe08754f28d32dc57252c49044e0c7a85ff13592eb8f968cefdf8a
-  e80d4be2f6385228aa87766d61ad4056fef68f947d0347cc15e1ac9279c6d27f
-  4de2a571131c843e83a036fcb518b45b2f1272caf3ec1467e601bc7e4510396b
-  b65b86534af75ec8067bda3cb3a96bd58bf8dc541a3b28dd55ddd6b7608a8bc5
-  1b2aa06d0940a6e48d2c4cdbacc6a9cb67745113d78ce07ee03bcae0090fcb67
+  00519bb36e017e54ed6a978bf6cf02e14bc9eb72d9054f0d58e91dc458b71e4b
+  76721ee29d9e80d6f6ce01f6b608eebec80caf455a9d22001e5fac383ee1a45b
+  9de20e7d3d8c8827a56c54b6974c95dcfec222f1a4d5c42d94453fa78ee3d241
+  10acc010fc6f3528645ff5b32c12672a14ae3d66290c7eb99cbc76a068f98f6a
+  ca09c2622cf889e11140fd40c3e15a34123b3269d23944655137bbde0eda93f9
+  e379cca01e3396ecfb19cacc6657e8df057b322fa5532273e5e3f5c8cf30805f
+  d6a3c91c99aa6618949f572b88019270bb30870b6253328ae4bcbe4feeee4635
+  f608eae2137c734f5263c16ad424e26d449f15f079f388b07d756ac7fec62060
 )
-expected_recursor_attack_sha="6625927071bd376f3088f2086c50f03d6440c3921e1fac94f7968d54e20197d9"
-expected_annotation_attack_sha="969e2e613043a6990d47e2530bd36d5165a95eb987effaca4be748d60dad6058"
-expected_surface_sha="039055e0302c7747e63a9ac8e3b63635e6a212c6ad18a60caabd6dfb44a20df8"
+expected_recursor_attack_sha="9f83ea02b0c5785485c94792180052fd8d344f6ae3da4e2f2485d114d790c9c1"
+expected_annotation_attack_sha="9874b7aeddb8018c0fd9f8c6ec954a57e71b7473c8f6009f23d6ff5e742066b5"
+expected_effectful_attack_sha="5ca30e43dd44030522ee1088690fd1e0d584abbbad24d921bab42889c7e3b9d2"
+expected_effectful_properties_attack_sha="b63832555fde83374317f876db5cb4679f3deaed8569f65063461fdfe8f4d543"
+expected_surface_sha="27a005bc9bcaa25cd6ef14c95bfd23ed6f303ba99fd6c9df29bcc6b82606e4e7"
 expected_pin_sha="a0a7a1537cfe3a9159a80210e3de92342cc9e98651f0e8273a75ccdcccae69bc"
 
 generation_mode="production"
@@ -108,6 +127,7 @@ required_rels=(
   "$generator_rel" "$assurance_rel" "$axiom_report_rel" "$surface_rel"
   "$pin_rel" "$register_rel" "$attacks_rel"
   "$recursor_attack_rel" "$annotation_attack_rel" "$annotation_gate_rel"
+  "$effectful_attack_rel" "$effectful_properties_attack_rel" "$effectful_gate_rel"
   scripts/check-schema-census.sh scripts/check-schema-fields.sh
   scripts/check-schema-payload-surface.sh scripts/test-schema-payload-surface-gate.sh
   "${source_rels[@]}" "${contract_rels[@]}" "${battery_rels[@]}"
@@ -134,6 +154,13 @@ tmp_root="$(mktemp -d "$tmp_parent/effect4-schema-structural-assurance.XXXXXX")"
 cleanup() {
   local cleanup_rc=$?
   set +e
+  if [[ "$cleanup_rc" -ne 0 ]]; then
+    for log in "$tmp_root"/*.log; do
+      [[ -f "$log" ]] || continue
+      printf -- "--- %s ---\n" "$(basename "$log")" >&2
+      tail -30 "$log" >&2
+    done
+  fi
   case "$tmp_root" in
     "$tmp_parent"/effect4-schema-structural-assurance.*) rm -rf -- "$tmp_root" ;;
     *) printf 'FAIL refusing to remove unexpected path: %s\n' "$tmp_root" >&2; cleanup_rc=1 ;;
@@ -197,6 +224,18 @@ actual_annotation_attack_sha="$(sha256_file "$repo_root/$annotation_attack_rel")
     "$expected_annotation_attack_sha" "$actual_annotation_attack_sha" >&2
   exit 1
 }
+actual_effectful_attack_sha="$(sha256_file "$repo_root/$effectful_attack_rel")"
+[[ "$actual_effectful_attack_sha" == "$expected_effectful_attack_sha" ]] || {
+  printf 'FAIL frozen Schema annotation attack drifted: expected %s, found %s\n' \
+    "$expected_effectful_attack_sha" "$actual_effectful_attack_sha" >&2
+  exit 1
+}
+actual_effectful_properties_attack_sha="$(sha256_file "$repo_root/$effectful_properties_attack_rel")"
+[[ "$actual_effectful_properties_attack_sha" == "$expected_effectful_properties_attack_sha" ]] || {
+  printf 'FAIL frozen Schema annotation attack drifted: expected %s, found %s\n' \
+    "$expected_effectful_properties_attack_sha" "$actual_effectful_properties_attack_sha" >&2
+  exit 1
+}
 
 (
   cd -- "$repo_root"
@@ -211,6 +250,9 @@ actual_annotation_attack_sha="$(sha256_file "$repo_root/$annotation_attack_rel")
   "$lake_bin" env lean "$recursor_attack_rel" >"$tmp_root/RecursiveElimination.log" 2>&1
   "$lake_bin" env lean "$annotation_attack_rel" >"$tmp_root/AnnotationDataPlane.log" 2>&1
   "$repo_root/$annotation_gate_rel" >"$tmp_root/annotations-host.log" 2>&1
+  "$lake_bin" env lean "$effectful_attack_rel" >"$tmp_root/EffectfulField.log" 2>&1
+  "$lake_bin" env lean "$effectful_properties_attack_rel" >"$tmp_root/EffectfulFieldProperties.log" 2>&1
+  "$repo_root/$effectful_gate_rel" >"$tmp_root/effectful-field-host.log" 2>&1
   "$lake_bin" env lean "$axiom_report_rel" >"$tmp_root/AxiomReport.log" 2>&1
   "$lake_bin" env lean "$assurance_rel" >"$tmp_root/assurance.log" 2>&1
 )
@@ -222,23 +264,24 @@ evidence_count() {
   awk -F '\t' -v kind="$1" '$1 == kind { count++ } END { print count + 0 }' \
     "$tmp_root/evidence.tsv"
 }
-[[ "$(evidence_count owned-declaration)" == 1298 ]] || {
-  printf 'FAIL Schema owned declaration census is not exactly 1298 rows\n' >&2; exit 1; }
-[[ "$(evidence_count theorem)" == 493 ]] || {
-  printf 'FAIL Schema theorem census is not exactly 493 rows\n' >&2; exit 1; }
-[[ "$(evidence_count axiom)" == 493 ]] || {
-  printf 'FAIL Schema axiom census is not exactly 493 rows\n' >&2; exit 1; }
+[[ "$(evidence_count owned-declaration)" == 1426 ]] || {
+  printf 'FAIL Schema owned declaration census is not exactly 1426 rows (found %s)\n' "$(evidence_count owned-declaration)" >&2; exit 1; }
+[[ "$(evidence_count theorem)" == 557 ]] || {
+  printf 'FAIL Schema theorem census is not exactly 557 rows (found %s)\n' "$(evidence_count theorem)" >&2; exit 1; }
+[[ "$(evidence_count axiom)" == 557 ]] || {
+  printf 'FAIL Schema axiom census is not exactly 557 rows (found %s)\n' "$(evidence_count axiom)" >&2; exit 1; }
 [[ "$(evidence_count absent)" == 9 ]] || {
-  printf 'FAIL Schema duplicate-prevention census is not exactly 9 rows\n' >&2; exit 1; }
+  printf 'FAIL Schema duplicate-prevention census is not exactly 9 rows (found %s)\n' "$(evidence_count absent)" >&2; exit 1; }
 
 printf '%s\n' \
-  $'Effect4.Data.Optic\t82' \
-  $'Effect4.Data.Json\t122' \
+  $'Effect4.Data.Optic\t113' \
+  $'Effect4.Data.Json\t124' \
   $'Effect4.Schema.Payload\t255' \
-  $'Effect4.Schema.Representation\t583' \
-  $'Effect4.Schema.Annotations\t55' \
-  $'Effect4.Schema.Document\t60' \
-  $'Effect4.Schema.Check\t141' >"$tmp_root/expected-module-counts.tsv"
+  $'Effect4.Schema.Representation\t585' \
+  $'Effect4.Schema.Annotations\t63' \
+  $'Effect4.Schema.Document\t62' \
+  $'Effect4.Schema.Check\t142' \
+  $'Effect4.Schema.EffectfulField\t82' >"$tmp_root/expected-module-counts.tsv"
 awk -F '\t' '$1 == "owned-declaration" { count[$3]++ }
   END { for (owner in count) print owner "\t" count[owner] }' \
   "$tmp_root/evidence.tsv" | LC_ALL=C sort >"$tmp_root/actual-module-counts.tsv"
@@ -259,8 +302,8 @@ fi
 
 awk '/^#print axioms / { print $3 }' "$repo_root/$axiom_report_rel" \
   >"$tmp_root/report.names"
-[[ "$(wc -l <"$tmp_root/report.names" | tr -d ' ')" == 182 ]] || {
-  printf 'FAIL curated Schema axiom report no longer contains exactly 182 names\n' >&2; exit 1; }
+[[ "$(wc -l <"$tmp_root/report.names" | tr -d ' ')" == 188 ]] || {
+  printf 'FAIL curated Schema axiom report no longer contains exactly 188 names\n' >&2; exit 1; }
 awk -F '\t' '$1 == "theorem" { print $2 }' "$tmp_root/evidence.tsv" \
   >"$tmp_root/theorem.names"
 awk -F '\t' '$1 == "owned-declaration" { print $2 }' "$tmp_root/evidence.tsv" \
@@ -286,7 +329,7 @@ while IFS= read -r theorem_name; do
 done <"$tmp_root/report.names"
 
 : >"$tmp_root/counterexamples.tsv"
-for suffix in $(seq -w 17 48); do
+for suffix in $(seq -w 17 55); do
   counterexample_id="E4-SCHEMA-CE-0$suffix"
   row="$(grep -F "| \`$counterexample_id\` |" "$repo_root/$register_rel" || true)"
   [[ "$(printf '%s\n' "$row" | grep -c . || true)" == 1 ]] || {
@@ -326,6 +369,10 @@ printf 'counterexample-battery\t%s\tsha256=%s\trequired-closed\n' \
   "$recursor_attack_rel" "$expected_recursor_attack_sha"
 printf 'counterexample-battery\t%s\tsha256=%s\trequired-closed\n' \
   "$annotation_attack_rel" "$expected_annotation_attack_sha"
+printf 'counterexample-battery\t%s\tsha256=%s\trequired-closed\n' \
+  "$effectful_attack_rel" "$expected_effectful_attack_sha"
+printf 'counterexample-battery\t%s\tsha256=%s\trequired-closed\n' \
+  "$effectful_properties_attack_rel" "$expected_effectful_properties_attack_sha"
 printf 'input\t%s\tsha256=%s\n' "$assurance_rel" \
   "$(sha256_file "$repo_root/$assurance_rel")"
 printf 'input\t%s\tsha256=%s\n' "$axiom_report_rel" \
@@ -337,6 +384,7 @@ printf 'gate\tSC-REP-FIELD-PIN\tscripts/check-schema-fields.sh\trequired-closed\
 printf 'gate\tSCHEMA-PAYLOAD-SURFACE\tscripts/check-schema-payload-surface.sh\trequired-closed\n'
 printf 'detector\tSCHEMA-PAYLOAD-SURFACE-REACTION\tscripts/test-schema-payload-surface-gate.sh\t13-of-13\trequired-closed\n'
 printf 'gate\tSCHEMA-ANNOTATION-HOST\t%s\trequired-closed\n' "$annotation_gate_rel"
+printf 'gate\tSCHEMA-EFFECTFUL-FIELD-HOST\t%s\trequired-closed\n' "$effectful_gate_rel"
 
 cat "$tmp_root/counterexamples.tsv"
 cat "$tmp_root/evidence.tsv"
@@ -379,11 +427,20 @@ graph-edge	SCHEMA-PG-ANNOTATION-DATA/recursive-traversal	ANNOTATION-EXHAUSTIVE-S
 graph-edge	SCHEMA-PG-ANNOTATION-DATA/counterexamples	E4-SCHEMA-CE-044-048	required-closed
 graph-edge	SCHEMA-PG-ANNOTATION-DATA/host	SCHEMA-ANNOTATION-HOST	required-closed
 graph-edge	SCHEMA-PG-ANNOTATION-DATA/trust	ANNOTATION-AXIOM-FREE-LAWS	required-closed
+graph-edge	SCHEMA-PG-EFFECTFUL-FIELD/marker-codec	EFFECTFUL-FIELD-MARKER-CODEC	required-closed
+graph-edge	SCHEMA-PG-EFFECTFUL-FIELD/occurrence-admission	EFFECTFUL-FIELD-RAW-OCCURRENCE-ADMISSION	required-closed
+graph-edge	SCHEMA-PG-EFFECTFUL-FIELD/identity	EFFECTFUL-FIELD-IDENTITY-AGREEMENT	required-closed
+graph-edge	SCHEMA-PG-EFFECTFUL-FIELD/program-equations	EFFECTFUL-FIELD-PROGRAM-EQUATIONS	required-closed
+graph-edge	SCHEMA-PG-EFFECTFUL-FIELD/interpretation	EFFECTFUL-FIELD-INTERPRET-PRESERVATION	required-closed
+graph-edge	SCHEMA-PG-EFFECTFUL-FIELD/counterexamples	E4-SCHEMA-CE-049-055	required-closed
+graph-edge	SCHEMA-PG-EFFECTFUL-FIELD/host	SCHEMA-EFFECTFUL-FIELD-HOST	required-closed
+graph-edge	SCHEMA-PG-EFFECTFUL-FIELD/trust	EFFECTFUL-FIELD-AXIOM-CEILING	required-closed
 graph-status	SCHEMA-PG-REPRESENTATION-TAG	all-applicable-edges-closed	required-closed
 graph-status	SCHEMA-PG-PAYLOAD	all-applicable-edges-closed	required-closed
 graph-status	SCHEMA-PG-FIELD-ADMISSION	recursive-judgment-closed	required-closed
 graph-status	DATA-PG-OPTIC	all-applicable-edges-closed	required-closed
 graph-status	SCHEMA-PG-ANNOTATION-DATA	all-applicable-edges-closed	required-closed
+graph-status	SCHEMA-PG-EFFECTFUL-FIELD	all-applicable-edges-closed	required-closed
 external-open	SCHEMA-PG-DOCUMENT	reference-semantics	required-open
 external-open	SCHEMA-PG-WIRE	codec-and-canonicalization	required-open
 EOF

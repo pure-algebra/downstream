@@ -9,18 +9,18 @@
 # edited continuously, so a document name plus a line number silently
 # retargets whenever a section above it grows or shrinks, and the citing
 # sentence keeps asserting a claim the target no longer makes. That has already
-# happened here: a proof-graph reallocation in `docs/SCHEMA-CUTOVER.md` moved
+# happened here: a proof-graph reallocation in `docs/research/SCHEMA-CUTOVER.md` moved
 # the five `SC-WIRE-*` obligation rows, and citations elsewhere in the tree were
 # left pointing at unrelated prose without any file being edited.
 #
 # This gate extracts every `<path>.<ext>:<line>` and `<path>.<ext>:<line>-<line>`
 # citation token under the scanned trees and rejects the ones whose target is
-# one of six protected authored documents:
+# one of five protected authored documents:
 #
-#   docs/SCHEMA-CUTOVER.md    PLAN.md    AGENTS.md
-#   docs/ARCHITECTURE.md      PORT-MANIFEST.md    docs/AGENT-ROUTING.md
+#   docs/research/SCHEMA-CUTOVER.md    PLAN.md    AGENTS.md
+#   docs/ARCHITECTURE.md      the former agent-routing document
 #
-# WHAT A PASS MEANS: in the scanned trees, no citation names one of those six
+# WHAT A PASS MEANS: in the scanned trees, no citation names one of those five
 # documents together with a line number. Cite a section heading, an obligation
 # ID such as `SC-WIRE-01`, a proof-graph node such as `SCHEMA-PG-WIRE`, or a
 # short quoted phrase from the target instead.
@@ -39,18 +39,36 @@
 #   * the five targets are matched exactly, after stripping one leading `./`,
 #     so a different file with the same basename under another directory is a
 #     different target and is not flagged; and
-#   * `vendor/` is skipped wherever it appears, because that tree is read-only
-#     pinned evidence whose internal citations belong to its own repository.
+#   * `vendor/`, `node_modules/` and the `_copy/` the patched-host gate builds
+#     are skipped wherever they appear, because none of those trees is authored
+#     here: `vendor/` is read-only pinned evidence whose internal citations
+#     belong to its own repository, and the other two are an installed
+#     dependency and a transient copy of one, which the repository router
+#     excludes from canonical evidence. They are pruned rather than filtered
+#     file by file: `harness/trace/patched/_copy/` alone holds the 2,341 files
+#     of the patched rc.112 tree, four times this repository's own text.
+#
+# ## Stamp (rule 9)
+#
+# The gate reads exactly the files it scans, so the key is those files and this
+# script, taken after the file list is built and before the scan runs. It needs
+# no Lean build and no host. `--root` reports on a supplied tree and closes
+# nothing here, so it neither reads nor writes a stamp.
 set -euo pipefail
 
-protected_docs="docs/SCHEMA-CUTOVER.md SCHEMA-CUTOVER.md PLAN.md AGENTS.md docs/ARCHITECTURE.md ARCHITECTURE.md PORT-MANIFEST.md docs/AGENT-ROUTING.md AGENT-ROUTING.md"
-scanned_trees="Effect4 Effect4Test docs test scripts harness"
+# The retired router name remains detector input, not a live document citation.
+retired_router_name="AGENT-ROUTING.md"
+protected_docs="docs/research/SCHEMA-CUTOVER.md SCHEMA-CUTOVER.md PLAN.md AGENTS.md docs/ARCHITECTURE.md ARCHITECTURE.md docs/${retired_router_name} ${retired_router_name}"
+scanned_trees="src Test tools ocaml ts docs scripts harness generated"
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+. "$repo_root/scripts/lib/portable.sh"
+. "$repo_root/scripts/lib/stamp.sh"
 root="$repo_root"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --force) export EFFECT4_FORCE=1 ;;
     --root)
       shift
       [[ $# -gt 0 ]] || { printf 'FAIL --root needs a directory argument\n' >&2; exit 1; }
@@ -60,8 +78,8 @@ while [[ $# -gt 0 ]]; do
       cat <<'USAGE'
 usage: check-internal-citations.sh [--root <dir>]
 
-Scans Effect4/, Effect4Test/, docs/, test/, scripts/, and harness/ under <dir>
-and rejects any citation that names one of the six protected authored
+Scans src/, Test/, docs/, scripts/, and harness/ under <dir>
+and rejects any citation that names one of the five protected authored
 documents together with a line number.
 
 --root defaults to this repository. Any other root reports a result about the
@@ -90,18 +108,37 @@ if [[ "${#scan_dirs[@]}" -eq 0 ]]; then
   exit 1
 fi
 
+# `grep -I -l -e .` names every argument that has at least one line and is not
+# binary, which is the same test the old per-file `grep -Iq .` made, in one
+# process for the whole tree rather than one process per file.
 files=()
 while IFS= read -r candidate; do
   case "$candidate" in
-    */vendor/*) continue ;;
+    */vendor/*|*/node_modules/*|*/_copy/*) continue ;;
   esac
-  grep -Iq . -- "$candidate" 2>/dev/null || continue
   files+=("$candidate")
-done < <(find "${scan_dirs[@]}" -type f -print | LC_ALL=C sort)
+done < <(find "${scan_dirs[@]}" \
+    \( -type d \( -name vendor -o -name node_modules -o -name _copy -o -name research -o -name _build -o -name .lake \) -prune \) -o \
+    -type f -print \
+  | LC_ALL=C sort \
+  | tr '\n' '\0' \
+  | xargs -0 grep -I -l -e . -- 2>/dev/null \
+  | LC_ALL=C sort)
 
 if [[ "${#files[@]}" -eq 0 ]]; then
   printf 'FAIL no readable text file was found under the scanned trees of %s\n' "$root" >&2
   exit 1
+fi
+
+if [[ "$root" == "$repo_root" ]]; then
+  stamped=1
+  key="$(stamp_key "$repo_root/scripts/check-internal-citations.sh" "${files[@]}")"
+  if stamp_hit internal-citations "$key"; then
+    stamp_report internal-citations "$key"
+    exit 0
+  fi
+else
+  stamped=0
 fi
 
 report="$(
@@ -150,7 +187,10 @@ if [[ "$violation_count" -gt 0 ]]; then
   exit 1
 fi
 
-printf 'PASS no line-numbered citation into the 6 protected authored documents\n'
+summary="$(printf '%s citation tokens examined in %s files, none into the 5 protected documents' \
+  "$candidates" "${#files[@]}")"
+if [[ "$stamped" -eq 1 ]]; then stamp_write internal-citations "$key" "$summary"; fi
+printf 'PASS no line-numbered citation into the 5 protected authored documents\n'
 printf 'PASS %s citation tokens examined in %s files across %s scanned tree(s)\n' \
   "$candidates" "${#files[@]}" "${#scan_dirs[@]}"
 if [[ "$root" == "$repo_root" ]]; then

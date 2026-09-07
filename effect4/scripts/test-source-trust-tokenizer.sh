@@ -8,10 +8,10 @@ project_root="$(cd "${1:-$repo_root}" && pwd)"
 tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/effect4-source-trust.XXXXXX")"
 trap 'rm -rf -- "$tmp_root"' EXIT
 
-cp "$project_root/Effect4Test/Audit/AxiomGate.lean" "$tmp_root/SourceTrustTokenizer.lean"
+cp "$project_root/Test/Audit/AxiomGate.lean" "$tmp_root/SourceTrustTokenizer.lean"
 cat >>"$tmp_root/SourceTrustTokenizer.lean" <<'LEAN'
 
-namespace Effect4Test.Audit
+namespace Test.Audit
 
 run_elab do
   let some fixtureDirectory ← liftM <| IO.getEnv "EFFECT4_SOURCE_TRUST_FIXTURES"
@@ -21,6 +21,16 @@ run_elab do
     ("benign.lean.txt", .ok none),
     ("partial.lean.txt", .ok (some "partial")),
     ("unsafe.lean.txt", .ok (some "unsafe")),
+    ("sorry.lean.txt", .ok (some "sorry")),
+    ("example-sorry.lean.txt", .ok (some "sorry")),
+    ("native-decide.lean.txt", .ok (some "native_decide")),
+    ("axiom.lean.txt", .ok (some "axiom")),
+    ("extern.lean.txt", .ok (some "extern")),
+    ("implemented-by.lean.txt", .ok (some "implemented_by")),
+    -- `opaque` is a keyword the bodied form uses too, so the tokenizer must
+    -- NOT refuse it; the ruling on the bodyless shape is a declaration-level
+    -- check, and `test-trust-gate.sh` is where that fixture is exercised.
+    ("opaque.lean.txt", .ok none),
     ("malformed-comment.lean.txt", .error ()),
     ("malformed-string.lean.txt", .error ()),
     ("malformed-raw-string.lean.txt", .error ()),
@@ -45,9 +55,9 @@ run_elab do
   unless failures.isEmpty do
     throwError "source tokenizer regression(s):\n{String.intercalate "\n" failures.toList}"
 
-end Effect4Test.Audit
+end Test.Audit
 LEAN
 
 cd "$project_root"
-EFFECT4_SOURCE_TRUST_FIXTURES="$repo_root/test/fixtures/trust-gate" \
+EFFECT4_SOURCE_TRUST_FIXTURES="$repo_root/Test/fixtures/trust-gate" \
   lake env lean "$tmp_root/SourceTrustTokenizer.lean"
