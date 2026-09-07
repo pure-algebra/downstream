@@ -1,10 +1,14 @@
 name = "effects"
-version = "0.1.0"
+version = "0.8.0"
 defaultTargets = ["Effects", "EffectsTest"]
 
 [[lean_lib]]
 name = "Effects"
 globs = ["Effects.*"]
+# The module that owns the admission boundary does not get to rely on
+# auto-binding. With `relaxedAutoImplicit` on as well, a mistyped type name
+# becomes a fresh universe-polymorphic implicit rather than an error.
+leanOptions = { autoImplicit = false, relaxedAutoImplicit = false }
 
 [[lean_lib]]
 name = "EffectsTest"

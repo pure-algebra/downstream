@@ -7,3 +7,4 @@
 # fails the gate, so an entry cannot outlive the red phase it describes.
 #
 # Removing the last entry restores the original all-green control.
+#
