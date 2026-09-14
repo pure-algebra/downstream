@@ -19,10 +19,15 @@ import Effect4.Data.JsonOptic
 import Effect4.Store.Digits
 import Effect4.Store.Utf8
 import Effect4.Store.Val
+-- The shape-free exact-image trait (U0, 2026-09-07): the views of the shared carrier the
+-- Machine layer uses without naming a `Shape`; `Canonical.image` is the bridge.
+import Effect4.Store.Image
+import Effect4.Store.Image.Containers
 import Effect4.Store.Digest
 import Effect4.Store.Kind
 import Effect4.Store.Shape
 import Effect4.Store.Canonical
+import Effect4.Store.RowCanonical
 import Effect4.Store.Node
 import Effect4.Store.Store
 import Effect4.Store.Word
@@ -35,6 +40,9 @@ import Effect4.Store.PinDerived
 -- The error channel everywhere.
 import Effect4.Machine.Cause
 import Effect4.Machine.Exit
+-- The shared value foundation, Machine side (U0): the handle-kind and runtime constructor
+-- tables, the `Value.*` spellings, and the generic cause/exit images over the carrier.
+import Effect4.Machine.Value
 -- The Schema data plane: the persisted carrier, the annotation data plane, the
 -- checker, the authoring face, and the value, getter, transformation, codec,
 -- registry and foreign rows.
@@ -47,13 +55,10 @@ import Effect4.Schema.Check
 import Effect4.Schema.Authoring
 import Effect4.Schema.Dimension
 -- Service keys, the rc.112 scope state machine, the frame alphabet (`Prim`,
--- `PrimInterp`, `FrameFiber`), and the frame-level facts that still pin it.
+-- `PrimInterp`, `FrameFiber`).
 import Effect4.Machine.Key
 import Effect4.Machine.Scope
-import Effect4.Machine.ScopeMachine
-import Effect4.Machine.ScopeRestoration
 import Effect4.Machine.Frames
-import Effect4.Machine.LiveStack
 -- Fiber ids and the supervision vocabulary the machine speaks.
 import Effect4.Machine.Fiber
 import Effect4.Machine.Supervision
@@ -64,40 +69,17 @@ import Effect4.Codegen.Schema
 import Effect4.Codegen.EffectfulField
 -- The reference machine (docs/research/2026-09-03-deep-plan.md): one
 -- program-carrying fiber machine over the rc.112 frames, the stores it drives,
--- the witnesses over them, and the Context and Layer models. Promoted from the
+-- the service map and the fiber context. Promoted from the
 -- `workshop/Deep` spike on 2026-09-04; the old fiber and scheduler carriers
 -- were retired the same day (`docs/research/2026-09-04-retire-old-machines.md`)
 -- and the Flow route (the Effects-flow compile and its simulations) was
 -- archived to branch `archive/flow-route` the same day
 -- (`docs/research/2026-09-04-prod-cleanup-inventory.md`).
 import Effect4.Machine.Fibers
-import Effect4.Machine.Clauses
 import Effect4.Machine.Stores
--- The stores' laws (slice 1, lane 2): the growth order, validity of values and operations,
--- the heap invariant, and that a valid operation steps, grows the store and answers a valid
--- value.
-import Effect4.Machine.StoresLaws
--- The fuel laws over the live fiber machine (G2): the loop with its residue and the
--- splitting law, the trace that only grows, the order on replay results, sufficiency and
--- stability, and the least sufficient fuel under a bound.
-import Effect4.Machine.Approximation
-import Effect4.Machine.Behaviour
-import Effect4.Machine.Scheduling
-import Effect4.Machine.Handles
-import Effect4.Machine.Witnesses
 import Effect4.Machine.Context
-import Effect4.Machine.Layer
--- The middle tier (2026-09-04): architecture views as Effect Schema documents
--- with payloads projected from the proof carriers, the structural acceptance
--- checker, and the pinned standard library as store entries. A schema is store
--- content through the store's own derived `Canonical Document` above; no JSON
--- alphabet of its own.
+-- Structural acceptance of persisted Schema documents.
 import Effect4.Arch.Accepts
-import Effect4.Arch.Views
-import Effect4.StdLib.Entry
-import Effect4.StdLib.Derived
-import Effect4.StdLib.Rc112
-import Effect4.StdLib.Links
 -- The Surface library (docs/research/2026-09-04-surface-library-plan.md), wave
 -- 1a: the substrate. `Kind` is the typed embedding, a representation with a
 -- kernel-checked kind, so an ill-kinded slot of a surface is unrepresentable
@@ -109,8 +91,7 @@ import Effect4.StdLib.Links
 -- with their clause-by-clause `check`, their `Arch` document views and their
 -- store content; `JsonSchema` is draft 2020-12 in both directions on one
 -- fragment, read off rc.112's own compiler; `Emit` is the rule census and the
--- stance, where every rule is `emitted` until its receipt lands; and `Views` is
--- the surface store.
+-- stance, where every rule is `emitted` until its receipt lands.
 --
 -- Waves 2a to 2c are the carriers the plan's §2 names. `Api` is the HTTP
 -- surface, its responses indexed by status and its path algebra decided over
@@ -139,7 +120,6 @@ import Effect4.Ingest.Ingest
 import Effect4.Ingest.JsonSchema
 import Effect4.Ingest.Wrangler
 import Effect4.Ingest.Mcp
-import Effect4.Evidence.SurfaceViews
 import Effect4.Surface.Api
 import Effect4.Codegen.HttpApi
 import Effect4.Surface.Agent
@@ -162,20 +142,6 @@ import Effect4.Codegen.SiteRoutes
 -- The application bundle: every carrier of one application under one closed world, its
 -- check (the parts, then the joins) and its artefact tree at the plan's paths.
 import Effect4.Codegen.App
--- The characterized components lane (workshop/Char/): a component is its kinds,
--- its failure set and the order they induce, so a lossy table still gets `order`
--- from one generic theorem rather than a hand-written word induction. `Queue` is
--- the first port, the rc.112 `Queue.ts` step emitted arm by arm and checked
--- against the source theorems it claims, with its reachability invariant, its
--- crash reading, its graded axes, and its acceptance and mutant-kill suites
--- decided in the kernel so a survivor is a build failure. `Conformance`,
--- `Manifest` and `Evidence` are the lane's census, its component table and its
--- receipts.
-import Effect4.Char.Conformance
-import Effect4.Char.Derived
-import Effect4.Char.Manifest
-import Effect4.Char.Queue.Grade
-import Effect4.Char.Queue.Mutants
 -- The AST relation (docs/research/2026-09-04-ast-relation-plan.md), lane A1:
 -- the Effect TS program syntax `Eff` and its typing, first-order and
 -- decidable throughout; the printer, the compile and the parser follow. `Eff`
@@ -187,40 +153,23 @@ import Effect4.Codegen.Print
 import Effect4.Codegen.Read
 import Effect4.Program.Native
 import Effect4.Program.Compile
--- The compile's ground (docs/research/2026-09-05-slice-1-compile-ground.md; packet
--- `Test/contracts/program-denotation.contract.md`): the value typing of the native cut and
--- that typed terms evaluate; the straight-line denotation into the `Effects` algebra over the
--- store signature; and the agreement — a plain program run by `Api.run` finishes with its
--- meaning's exit and stores (`run_eq_meaning`), through the frame machine's local run and the
--- fiber machine's command loop over one fiber.
-import Effect4.Program.Typed
-import Effect4.Program.Denote
-import Effect4.Program.Agreement
-import Effect4.Program.Agreement.Machine
--- The first join of the value typing and the stores' laws: a typed request against a typed
--- heap steps to a typed answer and keeps the heap typed (`answer_typed`, `progress`).
-import Effect4.Program.Progress
-import Effect4.Program.Sched
-import Effect4.Program.DenoteR
-import Effect4.Program.RuntimeR
-import Effect4.Program.Handles
+-- The target profile as data and as specification (DB-09's three parts; S6a): reachable from
+-- this root, imported by nothing in the API, so the library-root gate sees it here.
+import Effect4.Program.Profile
+import Effect4.Program.HostBoundary
 -- The provision algebra (docs/research/2026-09-04-provision-algebra.md): `Row.diff`, the
 -- layer signature `LayerTy` and its laws, the layer term `LayerTerm` over `Eff` bodies,
 -- `App` (`Effect.provide`), the build specification with its totality theorem, and the
--- lowering into the Layer machine with the docs deployment as its witness.
+-- compile-route runs of the docs deployment.
 import Effect4.Program.Provision
 -- Configuration as an algebra: rc.112's `ConfigProvider` in its `makeSource`/`makeOrElse`
 -- normal form (a fallback monoid under a path-transformation action), the `Config` reader with
 -- its tri-state resolution, dotenv substitution with fuel, and the configuration requirement
 -- row (`docs/research/2026-09-04-production-standards-spike.md` §4).
 import Effect4.Program.Config
--- The observability surface at the pin: the OTLP resource, span, log and metric records as
--- first-order carriers, the four exporters' `OTEL_*` reads as one `ConfigTerm` whose residual
--- is the operator contract, and W3C/b3 trace-context propagation as a codec with a round trip.
-import Effect4.Surface.Observability
--- The layer printer: a `LayerTerm` and an `App` as the rc.112 `Layer.*` / `Effect.provide`
--- combinators, syntax never text, with the declared `Layer.Layer<ROut, E, RIn>` types.
-import Effect4.Codegen.Layer
+-- The configuration values as an exact image of the shared carrier with their six-frame
+-- admission (U0; U1c makes them the carrier plus the admission).
+import Effect4.Program.ConfigValue
 -- The canonical bytes of a program (2026-09-04; one trait since 2026-09-05): the
 -- generated `Canonical (Eff NativeOp)` and its family, then the Wire face over
 -- it — `encodeProgram`, `decodeProgram`, the round trip and exactness as
@@ -232,11 +181,15 @@ import Effect4.Program.Wire
 -- The application face: one module, the whole pipeline (type, print, compile,
 -- run; the Schema syntax), answering syntax and never text. Import this.
 import Effect4.Api
+import Effect4.Api.HostSession
+-- Foreign-source ingestion tables and constructed target spellings.
+import Effect4.Ingest.Taxonomy
+import Effect4.Codegen.Forms
+import Effect4.Codegen.Styles
 
 /-!
 # Effect4
 
-Standalone Lean library for a closed, first-order, effectful core and its
-proof-bearing bridges. The semantic modules are introduced only after their
-contract packets and counterexample batteries are frozen.
+The application API and functional utilities for a closed, first-order effectful core.
+The separate `Effect4.Laws` root imports the proof graph; this root never reaches it.
 -/

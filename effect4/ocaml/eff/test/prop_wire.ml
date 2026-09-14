@@ -32,15 +32,17 @@ let strings =
 
 let rand_string () = pick strings
 
-(* All 53 op values — every constructor, and inside them every FnName and every
-   FinalizerStrategy — are enumerated by Eff_native.all_ops, so drawing from it covers
-   the op alphabet without a separate FnName/FinalizerStrategy generator. *)
-let rand_op () = pick Eff_native.all_ops
+(* The 55 built-in op values enumerate every FnName and FinalizerStrategy.
+   External operations additionally sample scalar row indices. *)
+let rand_op () = if ri 4 = 0 then Native_op_external (rand_nat ()) else pick Eff_native.all_ops
 let rand_mask () = pick [ Mask_mode_interruptible; Mask_mode_uninterruptible; Mask_mode_inherit ]
 let rand_mode () = pick [ Observer_mode_awaitValue; Observer_mode_joinEffect ]
 
 let rand_options () =
   { fork_options_startImmediately = rb (); fork_options_daemon = rb (); fork_options_maskMode = rand_mask () }
+
+let rand_service_key () =
+  { service_key_name = { service_name_value = rand_nat () }; service_key_service = { service_type_code_value = rand_nat () } }
 
 let rand_lit () =
   match ri 4 with
@@ -76,7 +78,7 @@ let rec rand_eff d =
     | _ -> Eff_perform (rand_op (), t ())
   else
     let e () = rand_eff (d - 1) in
-    match ri 24 with
+    match ri 27 with
     | 0 -> Eff_succeed (t ())
     | 1 -> Eff_fail (t ())
     | 2 -> Eff_failCause (rand_cause (d - 1))
@@ -100,7 +102,23 @@ let rec rand_eff d =
     | 20 -> Eff_withFiber (rand_action (d - 1))
     | 21 -> Eff_scoped (e ())
     | 22 -> Eff_acquireRelease (e (), e ())
-    | _ -> Eff_choose (rand_nat (), e (), e ())
+    | 23 -> Eff_choose (rand_nat (), e (), e ())
+    | 24 -> Eff_provideLayer (rand_layer (d - 1), rb (), e ())
+    | 25 -> Eff_service (rand_service_key ())
+    | _ -> Eff_provideService (rand_service_key (), t (), e ())
+
+and rand_layer d =
+  if d <= 0 then Layer_term_succeed (rand_service_key (), rand_lit ())
+  else
+    match ri 8 with
+    | 0 -> Layer_term_succeed (rand_service_key (), rand_lit ())
+    | 1 -> Layer_term_effect (rand_service_key (), rand_eff (d - 1))
+    | 2 -> Layer_term_effectDiscard (rand_eff (d - 1))
+    | 3 -> Layer_term_provide (rand_layer (d - 1), rand_layer (d - 1))
+    | 4 -> Layer_term_provideMerge (rand_layer (d - 1), rand_layer (d - 1))
+    | 5 -> Layer_term_merge (rand_layer (d - 1), rand_layer (d - 1))
+    | 6 -> Layer_term_fresh (rand_layer (d - 1))
+    | _ -> Layer_term_orDie (rand_layer (d - 1))
 
 and rand_stmt d =
   match ri 6 with
@@ -157,14 +175,22 @@ let rand_key () =
 
 let rand_list f = List.init (ri 4) (fun _ -> f ())
 
+(* Requirement rows are canonical sets in the Lean source image. Invalid ordering and
+   duplicates are tested separately by test_metadata; round-trip samples stay in-domain. *)
+let rand_requirements () =
+  let key k = k.service_key_name.service_name_value, k.service_key_service.service_type_code_value in
+  List.sort_uniq (fun a b -> compare (key a) (key b)) (rand_list rand_key)
+
 let rand_row () =
   { row_name = rand_string (); row_spelling = rand_string ();
-    row_shape = pick [ Row_shape_call; Row_shape_value ]; row_trailing = rand_list rand_string;
+    row_shape = pick [ Row_shape_call; Row_shape_value; Row_shape_tupleCall; Row_shape_method ]; row_trailing = rand_list rand_string;
     row_kind = pick [ Row_kind_sync; Row_kind_async; Row_kind_program ];
     row_request = rand_ty 2; row_answer = rand_ty 2; row_error = rand_ty 2;
-    row_requires = rand_list rand_key; row_cite = rand_string () }
+    row_requires = rand_requirements (); row_cite = rand_string ();
+    row_typeArgs = rand_list rand_string;
+    row_registration = pick [ Registration_deferred; Registration_external ] }
 
-let rand_eff_ty () = { eff_ty_answer = rand_ty 3; eff_ty_error = rand_ty 3; eff_ty_requires = rand_list rand_key }
+let rand_eff_ty () = { eff_ty_answer = rand_ty 3; eff_ty_error = rand_ty 3; eff_ty_requires = rand_requirements () }
 
 let checks = ref 0
 let failures = ref 0

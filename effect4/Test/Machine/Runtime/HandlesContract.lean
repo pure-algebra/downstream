@@ -1,5 +1,5 @@
-import Effect4.Program.Handles
-import Effect4.Machine.Witnesses
+import Effect4.Laws.Program.Handles
+import Effect4.Laws.Machine.Witnesses
 import Test.Machine.Runtime.CompletionContract
 
 /-! Handle invariant battery (C13, `handles_minted`). Every `#guard` is a decidable check on
@@ -105,7 +105,7 @@ def initial (state : Stores) (program : ProgName) : Witnesses.M :=
 #guard Minted (Api.replay waiting 0 [Api.evaluate, reply (.ofExit (.success (.fiber ⟨7⟩)))]).machine
 
 -- Handles inside reified exits and exit lists remain visible to the traversal.
-#guard (Val.exitCons (.exitOk (.fiber ⟨7⟩)) (.exitCons (.cell ⟨3⟩) .exitNil)).keys =
+#guard Val.keys (Val.list [Val.exitOk (Val.fiber ⟨7⟩), Val.cell ⟨3⟩]) =
   [Handle.fiber ⟨7⟩, Handle.cell ⟨3⟩]
 
 /-! ## Forks mint fibers, stores mint cells -/
@@ -168,7 +168,7 @@ def interruptedFromNowhere : Api.Run :=
 -- Race settlement reads both the accepted exit and the live entrants. The duplicate
 -- winner is bookkeeping only. These probes pin the precise collected positions.
 def raceCarrier (state : Supervision.RaceAllState Val Err Defect FiberId Ann) : Api.Machine :=
-  { Api.load waiting 80 with races := [⟨0, Api.root, 0, state, false, []⟩] }
+  { Api.load waiting 80 with races := [⟨0, Api.root, 0, state, false, [], false⟩] }
 
 #guard Minted (raceCarrier (Supervision.RaceAllState.initial []))
 #guard !(Minted (raceCarrier { Supervision.RaceAllState.initial [] with
@@ -179,11 +179,13 @@ def raceCarrier (state : Supervision.RaceAllState Val Err Defect FiberId Ann) : 
 
 -- Deferred waiter targets are excluded; the completion code is collected separately.
 def orphanWaiterStore : Stores :=
-  { Stores.empty with deferreds := ⟨[⟨none, [(⟨7⟩, 0)]⟩], []⟩ }
+  { Stores.empty with
+    deferreds := ⟨[⟨none, { WakeList.empty with waiters := [⟨⟨7⟩, 0, 0, ()⟩] }⟩], []⟩ }
 
 #guard MintedS (RunMachine.empty orphanWaiterStore)
 #guard !(MintedS (RunMachine.empty { orphanWaiterStore with
-  deferreds := ⟨[⟨some (.success (.fiber ⟨7⟩)), [(⟨7⟩, 0)]⟩], []⟩ }))
+  deferreds :=
+    ⟨[⟨some (.success (.fiber ⟨7⟩)), { WakeList.empty with waiters := [⟨⟨7⟩, 0, 0, ()⟩] }⟩], []⟩ }))
 
 /-! ## The theorem on an explicit run -/
 
@@ -194,5 +196,9 @@ theorem waiting_answered_minted :
 theorem forkJoin_minted :
     Minted (Api.replay pForkJoin 80 [Api.evaluate, RunDecision.fire Api.root]).machine :=
   handles_minted pForkJoin 80 _ [] ⟨load_minted pForkJoin 80, by decide⟩
+
+-- E4-CHECK-CE-010: numeric interruptor provenance is not a dereferenced handle.
+example (cell : DeferredKey) (id : FiberId) :
+    (SyncOp.deferredInterruptWith cell id).keys = [Handle.promise cell] := rfl
 
 end Test.Runtime.HandlesContract

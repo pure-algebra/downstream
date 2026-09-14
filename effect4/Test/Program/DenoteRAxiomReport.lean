@@ -1,4 +1,4 @@
-import Effect4.Program.DenoteR
+import Effect4.Laws.Program.DenoteR
 import Test.Program.DenoteRContract
 
 /-! Fresh dependency receipts for R2 as restated by P2; the whole-tree gate enforces the
@@ -20,6 +20,9 @@ ceiling. -/
 #print axioms Effect4.Program.Sched.eraseControl_onExitR
 #print axioms Effect4.Program.Sched.eraseControl_suspendR
 #print axioms Effect4.Program.Sched.eraseControl_sync
+#print axioms Effect4.Program.Sched.constructR
+#print axioms Effect4.Program.Sched.prepareR
+#print axioms Effect4.Program.Sched.eraseControl_constructR
 #print axioms Effect4.Program.Sched.denoteAction
 #print axioms Effect4.Program.Sched.denoteAsync
 #print axioms Effect4.Program.Sched.inlineYield

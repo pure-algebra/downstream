@@ -1,7 +1,9 @@
+import Tools.GeneratedStamp
 import Lean
 import OCaml5.Ml.Syntax
 import OCaml5.Ml.Render
 import OCaml5.Lcnf.Dump
+import OCaml5.Lcnf.Externs
 import OCaml5.Lcnf.Types
 import OCaml5.Lcnf.Translate
 
@@ -18,7 +20,32 @@ file, and print a report of what was and was not covered.
       Effect4.Machine.Dispatcher.insert Effect4.Machine.Dispatcher.enqueue …
 
 Options: `--out <path>` (default `ocaml/gen/machine_gen.ml`), `--cap <n>` (default
-60), `--types A,B,…` (types to emit in full even when no translated code destructs them).
+60), `--types A,B,…` (types to emit in full even when no translated code destructs them),
+`--import M` (the module whose environment the roots are looked up in; default
+`Effect4.Machine.Fibers`, repeatable — every existing regeneration command is unchanged).
+
+## The seam (`--externs`, `--prelude`)
+
+With `--externs <file>` the run reads an `OCaml5.Lcnf.Externs` table (its format is that
+module's docstring) and the output becomes
+
+```
+[@@@warning …]
+<the six carrier module types, verbatim>
+module Make (M : TABLE) (T : TRACE) (L : LAYERS) (D : DISPATCHER) (P : PPATH) (E : PENV) (F : FIBERS) = struct
+  <the type group>                (* it mentions M.t / T.t / L.t / D.t, so it moves inside *)
+  <--prelude, verbatim>           (* the hand rows: they need the record types above *)
+  <the declarations>
+end
+```
+
+A functor body type-checks with **no instance**, and that is the proof the table is closed
+(`docs/research/2026-09-08-engine-a1-state.md` §1.3): any generated site that still treats a
+carrier field as a list is an `ocamlopt` type error. The run **fails** when a `fn` row (as
+opposed to `fn?`), a `type` row or a `field` row was never hit — a stale row is a stale ledger.
+
+Without `--externs` nothing changes: the file is the flat structure it has always been, so
+`ocaml/gen/api_gen.ml`'s regeneration command produces the same bytes.
 
 This is a tool (`IO`, `MetaM`); it is not part of any audited library.
 -/
@@ -30,29 +57,89 @@ structure GenArgs where
   types : Array Name := #[]
   cap : Nat := 60
   roots : Array Name := #[]
+  /-- Modules to import before looking the roots up. Empty means the default. -/
+  imports : Array Name := #[]
+  /-- The `Extract Constant` table (`--externs <file>`). None means the flat, unseamed output. -/
+  externs : Option String := none
+  /-- Hand OCaml spliced verbatim inside the functor, after the type group (`--prelude <file>`).
+  It is where a row whose Lean body applies a builtin to a carrier field lives, because only
+  there can it see both the carrier parameters and the generated record types. -/
+  prelude : Option String := none
+
+/-- The import list actually used: `--import`s, or `Effect4.Machine.Fibers` when none was given,
+so every command written before `--import` existed generates exactly what it did before. -/
+def GenArgs.importModuleNames (a : GenArgs) : Array Name :=
+  if a.imports.isEmpty then #[`Effect4.Machine.Fibers] else a.imports
 
 partial def parseArgs : List String → GenArgs → GenArgs
   | "--out" :: p :: rest, a => parseArgs rest { a with out := p }
   | "--types" :: ts :: rest, a =>
     parseArgs rest { a with types := a.types ++ ((ts.splitOn ",").map String.toName).toArray }
   | "--cap" :: n :: rest, a => parseArgs rest { a with cap := n.toNat! }
+  | "--import" :: m :: rest, a =>
+    parseArgs rest { a with imports := a.imports ++ ((m.splitOn ",").map String.toName).toArray }
+  | "--externs" :: p :: rest, a => parseArgs rest { a with externs := some p }
+  | "--prelude" :: p :: rest, a => parseArgs rest { a with prelude := some p }
   | r :: rest, a => parseArgs rest { a with roots := a.roots.push r.toName }
   | [], a => a
 
 def main (argv : List String) : IO Unit := do
   initSearchPath (← findSysroot)
   let args := parseArgs argv {}
-  let env ← importModules #[{ module := `Effect4.Machine.Fibers }] {} 0
+  let ex : Externs ← match args.externs with
+    | none => pure {}
+    | some path => do
+      match Externs.parse (← IO.FS.readFile path) with
+      | .ok e => pure e
+      | .error msg => throw (IO.userError s!"{path}: {msg}")
+  let preludeText : Option String ← match args.prelude with
+    | none => pure none
+    | some path => pure (some (← IO.FS.readFile path))
+  let mods := args.importModuleNames
+  let env ← importModules (mods.map fun m => { module := m }) {} 0
   let ctx : Core.Context := { fileName := "<lcnf-gen>", fileMap := default }
   let act : MetaM Unit := do
-    let closure ← translateClosure args.roots args.cap
-    let gen ← generate (closure.realTypes ++ args.types) closure.mentioned
+    -- Two Lean type constants can share a short name (`Effect4.Api.Outcome` and
+    -- `Effect4.Machine.Outcome` are both `outcome`). Renaming one *after* the annotations and
+    -- constructors are rendered makes them disagree, so the collisions are discovered on a
+    -- first pass and fed back as `TypeNames` before anything is written; the loop repeats in
+    -- case a fallback name collides in its turn.
+    let mut tn : TypeNames := {}
+    let mut closure ← translateClosure args.roots args.cap tn ex
+    let mut gen ← generate (closure.realTypes ++ args.types) closure.mentioned tn ex
+    let mut renamed : Array (String × Name × Name) := #[]
+    for _ in [:4] do
+      if gen.collisions.isEmpty then break
+      renamed := renamed ++ gen.collisions
+      for (_, _, n) in gen.collisions do tn := tn.insert n (fullTypeName n)
+      closure ← translateClosure args.roots args.cap tn ex
+      gen ← generate (closure.realTypes ++ args.types) closure.mentioned tn ex
     let cmd := "lean -M4096 --run src/OCaml5/Tools/LcnfGen.lean " ++ " ".intercalate argv
-    let header := "GENERATED by OCaml5.Lcnf (src/OCaml5/Lcnf/*.lean) from the mono-phase LCNF "
-      ++ "of Effect4.Machine.Fibers, Lean 4.33.1. Do not edit. Regenerate with:\n   " ++ cmd
+    let stamp ← Tools.GeneratedStamp.line "src/OCaml5/Tools/LcnfGen.lean" (mods.toList.map toString)
+      (args.externs.toList ++ args.prelude.toList)
+    let header := stamp ++ "\n" ++ "GENERATED by OCaml5.Lcnf (src/OCaml5/Lcnf/*.lean) from the mono-phase LCNF "
+      ++ "of " ++ ", ".intercalate (mods.toList.map toString)
+      ++ ", Lean 4.33.1. Do not edit. Regenerate with:\n   " ++ cmd
+    let emitted ← match emit closure.decls with
+      | .ok items => pure items
+      | .error message => throwError message
+    let body : List Ml.Decl :=
+      [gen.item, .blank]
+        ++ (match preludeText with | none => [] | some t => [.rawD t, .blank])
+        ++ emitted
+    -- Without a table the file is what it always was; with one, the type group mentions the
+    -- carrier parameters, so the whole body moves inside the functor (A1 §1.5).
+    -- The seamed file adds warning 30 (a record label claimed by two of the ~80 generated
+    -- record types) because the engine library compiles with `-w +a` and dune's dev profile
+    -- makes 30 fatal; `ocaml/gen` builds with `-warn-error -a` and its list is left alone, so
+    -- `ocaml/gen/api_gen.ml` regenerates byte for byte.
     let items : List Ml.Decl :=
-      [.floatingAttrD "warning \"-26-27-32-33-35-37-39-69\"", .blank, gen.item, .blank]
-        ++ emit closure.decls
+      if args.externs.isNone then
+        [.floatingAttrD "warning \"-26-27-32-33-35-37-39-69\"", .blank] ++ body
+      else
+        [.floatingAttrD "warning \"-26-27-30-32-33-35-37-39-69\"", .blank,
+         .rawD carrierSignatures, .blank,
+         .moduleD "Make" carrierParams none body]
     let modName := (System.FilePath.mk args.out).fileStem.getD "machine_gen"
     let m : Ml.Module := { name := modName, header := some header, items := items }
     IO.FS.writeFile args.out (Ml.render m)
@@ -70,5 +157,43 @@ def main (argv : List String) : IO Unit := do
     IO.println s!"types as placeholders: {gen.placeholders}"
     IO.println s!"requested but not inductive: {gen.notInductive}"
     IO.println s!"field types not spelled: {gen.unknown}"
-    IO.println s!"type-name collisions: {gen.collisions}"
+    IO.println s!"type-name collisions renamed to their full path: {renamed}"
+    IO.println s!"type-name collisions left unresolved: {gen.collisions}"
+    -- G10: the extern ledger. Every row is reported; a row nothing hit is fatal, because a
+    -- stale row is a claim about the generated file that the generated file does not make.
+    if args.externs.isSome then
+      let fnRows := ex.fns.toList
+      let tyRows := ex.tys.toList
+      let fieldRows := ex.fields.toList
+      let elemRows := ex.elems.toList
+      IO.println s!"extern rows: {fnRows.length} fn, {tyRows.length} type, \
+        {fieldRows.length} field, {elemRows.length} elem"
+      IO.println s!"fn rows used ({closure.usedExterns.size}):"
+      for n in closure.usedExterns do IO.println s!"  {n} -> {(ex.fn? n).get!.head}"
+      IO.println s!"type rows used ({gen.usedTys.size}): {gen.usedTys}"
+      IO.println s!"field rows used ({gen.usedFields.size}): {gen.usedFields}"
+      IO.println s!"elem rows used ({gen.usedElems.size}): {gen.usedElems}"
+      IO.println s!"ops rows: {ex.ops.size}, used ({closure.usedOps.size}): {closure.usedOps}"
+      IO.println s!"carg rows: {ex.cargs.size}, used ({closure.usedCargs.size}): \
+        {closure.usedCargs}"
+      -- Every place a carrier had to be copied back into the Lean list. It is correct and it
+      -- is O(depth); the list is printed so that a missing `carg` row is visible here rather
+      -- than only in a bench.
+      IO.println s!"carrier to_list sites ({closure.toLists.size}):"
+      for t in closure.toLists do IO.println s!"  {t}"
+      let mut stale : Array String := #[]
+      for (n, row) in fnRows do
+        unless row.optional || closure.usedExterns.contains n do stale := stale.push s!"fn {n}"
+      for (n, _) in tyRows do
+        unless gen.usedTys.contains n do stale := stale.push s!"type {n}"
+      for (n, _) in fieldRows do
+        unless gen.usedFields.contains n do stale := stale.push s!"field {n}"
+      for (n, _) in elemRows do
+        unless gen.usedElems.contains n do stale := stale.push s!"elem {n}"
+      for (n, _) in ex.ops.toList do
+        unless closure.usedOps.contains n do stale := stale.push s!"ops {n}"
+      for (n, _) in ex.cargs.toList do
+        unless closure.usedCargs.contains n do stale := stale.push s!"carg {n}"
+      unless stale.isEmpty do
+        throwError "extern rows no declaration hit (a stale ledger): {stale}"
   let _ ← (act.run' {}).toIO ctx { env := env }

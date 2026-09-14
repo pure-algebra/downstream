@@ -30,17 +30,17 @@ open Effect4.Program
 read-modify-write row whose pure function trails the request. -/
 def rowOf : Fin 4 → Row
   | 0 => ⟨"get", "Ref.get", .call, [], .sync, .handle "Ref.Ref<number>", .nat, .never, [],
-           "Ref.ts:200"⟩
-  | 1 => ⟨"count", "cell.count", .value, [], .sync, .unit, .nat, .never, [], "Ref.ts:210"⟩
+           "Ref.ts:200", [], .deferred⟩
+  | 1 => ⟨"count", "cell.count", .value, [], .sync, .unit, .nat, .never, [], "Ref.ts:210", [], .deferred⟩
   | 2 => ⟨"await", "Deferred.await", .call, [], .async,
-           .handle "Deferred.Deferred<number, never>", .nat, .never, [], "Deferred.ts:120"⟩
+           .handle "Deferred.Deferred<number, never>", .nat, .never, [], "Deferred.ts:120", [], .deferred⟩
   | 3 => ⟨"update", "Ref.update", .call, ["incr"], .sync, .handle "Ref.Ref<number>", .unit,
-           .never, [], "Ref.ts:1273-1276"⟩
+           .never, [], "Ref.ts:1273-1276", [], .deferred⟩
 
 def sig : Signature (Fin 4) :=
   { rowOf := rowOf
   , atomOf := fun atom args => if atom = "succ" ∧ args = [Ty.nat] then some Ty.nat else none
-  , scopeKey := ⟨⟨0⟩, ⟨0⟩⟩ }
+  , scopeKey := ⟨⟨0⟩, ⟨0⟩⟩, serviceTy := fun _ => none }
 
 /-- The inverse of the table on (spelling, trailing names). -/
 def spell (s : String) (names : List String) : Option (Fin 4) :=
@@ -77,6 +77,197 @@ theorem lawful : LawfulSpelling sig spell where
       decide
     exact name_notin _ (h op) i
   trailing_ne_undefined := by decide
+
+/-! ## Tuple-call rows: the canonical wrapper, scoping and trailing-name order
+
+The fixture shares one export spelling between a synchronous row without trailing
+names and an asynchronous row with two trailing names. It exercises the generic
+reader independently of the native table. -/
+
+/-! ## `E4-CHECK-CE-013`: a row's declared type arguments
+
+rc.112's `Deferred.make` has defaulted type parameters, so a bare call types the handle at
+those defaults and every later use is rejected. A row that declares type arguments prints and
+reads them, and only them: a bare call of that row and a call carrying the wrong arguments
+are both outside the readable image. -/
+
+def genericSig : Signature Bool :=
+  { rowOf := fun _ =>
+      ⟨"make", "Deferred.make", .call, [], .sync, .unit,
+        .handle "Deferred.Deferred<number, number>", .never, [], "vendor/effect-4.0.0-rc.112/src/Deferred.ts:171",
+        ["number", "number"], .deferred⟩
+  , atomOf := fun _ _ => none, scopeKey := ⟨⟨0⟩, ⟨0⟩⟩, serviceTy := fun _ => none }
+
+def genericSpell (s : String) (names : List String) : Option Bool :=
+  if s = "Deferred.make" ∧ names = [] then some true else none
+
+-- the printed head carries the declared arguments, and reads back to the row
+#guard TypeScript.Render.expr TypeScript.house0 0
+  (printRow (genericSig.rowOf true) (.lit .unit)) = "Deferred.make<number, number>()"
+
+#guard roundTrip genericSig genericSpell 0 (.perform true (.lit .unit))
+  = .ok (.perform true (.lit .unit))
+
+-- the bare call names this row but omits what it declares, so it is refused rather than
+-- read as some other program: `Deferred.make()` is exactly the emission `E4-CHECK-CE-013`
+-- rejects
+#guard (readEff genericSig genericSpell 0 (.call (.ident "Deferred.make") [])).isOk = false
+
+-- wrong type arguments, and an empty argument list, are refused
+#guard (readEff genericSig genericSpell 0
+  (.call (.generic (.ident "Deferred.make") ["number"]) [])).isOk = false
+#guard (readEff genericSig genericSpell 0
+  (.call (.generic (.ident "Deferred.make") []) [])).isOk = false
+
+-- and a row that declares none still refuses a call that carries some
+#guard (readEff sig spell 1
+  (.call (.generic (.ident "Ref.get") ["number"]) [.ident "a0"])).isOk = false
+
+def tupleRowOf : Bool → Row
+  | false => ⟨"tuple", "Fixture.tuple", .tupleCall, [], .sync,
+      .prod .nat .nat, .nat, .never, [], "§14 tuple-call fixture", [], .deferred⟩
+  | true => ⟨"tupleAsync", "Fixture.tuple", .tupleCall, ["first", "second"], .async,
+      .prod .nat .nat, .nat, .never, [], "§14 tuple-call fixture with trailing names", [], .deferred⟩
+
+def tupleSig : Signature Bool :=
+  { rowOf := tupleRowOf, atomOf := fun _ _ => none, scopeKey := ⟨⟨0⟩, ⟨0⟩⟩
+  , serviceTy := fun _ => none }
+
+def tupleSpell (s : String) (names : List String) : Option Bool :=
+  if s = "Fixture.tuple" ∧ names = [] then some false
+  else if s = "Fixture.tuple" ∧ names = ["first", "second"] then some true
+  else none
+
+theorem tupleLawful : LawfulSpelling tupleSig tupleSpell where
+  spell_row := by decide
+  row_of_spell := by
+    intro s names op h
+    unfold tupleSpell at h
+    split at h
+    · rename_i hc; cases h; exact ⟨hc.1.symm, hc.2.symm⟩
+    · split at h
+      · rename_i hc; cases h; exact ⟨hc.1.symm, hc.2.symm⟩
+      · cases h
+  value_trailing := by decide
+  spelling_ne_name := by
+    intro op i
+    cases op <;> exact (Var.name_ne (by decide) i).symm
+  spelling_not_reserved := by decide
+  trailing_ne_name := by
+    intro op i
+    cases op <;> exact name_notin _ (by decide) i
+  trailing_ne_undefined := by decide
+
+-- The wrapper head is gone: `Reflect.apply` is an ordinary unknown atom (source-repairs §18).
+#guard headOf "Reflect.apply" = none
+
+#guard roundTrip tupleSig tupleSpell 1 (.perform false (.var 0)) =
+  .ok (.perform false (.var 0))
+
+#guard roundTrip tupleSig tupleSpell 1 (.callback true (.var 0)) =
+  .ok (.callback true (.var 0))
+
+#guard roundTrip tupleSig tupleSpell 0
+    (.perform false (.app "pair" (.cons (.lit (.nat 2)) (.cons (.lit (.nat 7)) .nil)))) =
+  .ok (.perform false (.app "pair" (.cons (.lit (.nat 2)) (.cons (.lit (.nat 7)) .nil))))
+
+#guard roundTrip tupleSig tupleSpell 1
+    (.callback true (.app "pair" (.cons (.var 0) (.cons (.lit (.nat 7)) .nil)))) =
+  .ok (.callback true (.app "pair" (.cons (.var 0) (.cons (.lit (.nat 7)) .nil))))
+
+-- A pair of one variable's components prints as the variable and reads back as it:
+-- outside the readable image, by `requestReadable`.
+#guard requestReadable (tupleRowOf false) 1
+    (.app "pair" (.cons (.app "fst" (.cons (.var 0) .nil))
+      (.cons (.app "snd" (.cons (.var 0) .nil)) .nil))) = false
+
+#guard roundTrip tupleSig tupleSpell 1
+    (.perform false (.app "pair" (.cons (.app "fst" (.cons (.var 0) .nil))
+      (.cons (.app "snd" (.cons (.var 0) .nil)) .nil)))) = .ok (.perform false (.var 0))
+
+-- Tuple rows retain their request; request metadata does not introduce a new loss.
+#guard requestReadable { tupleRowOf false with request := .unit } 1 (.var 0) = true
+
+#guard requestReadable (tupleRowOf false) 1 (.var 1) = false
+-- `undefined` prints as one identifier, like a binder, so its component reads read back.
+#guard requestReadable (tupleRowOf false) 1 (.lit .unit) = true
+#guard roundTrip tupleSig tupleSpell 1 (.perform false (.lit .unit)) =
+  .ok (.perform false (.lit .unit))
+#guard requestReadable (tupleRowOf false) 1 (.lit (.nat 7)) = false
+#guard requestReadable (tupleRowOf false) 1
+    (.app "pair" (.cons (.var 0) (.cons (.var 1) .nil))) = false
+
+-- The saved-variable spelling reads as the variable, under the ordinary scope check.
+#guard readEff tupleSig tupleSpell 1 (.call (.ident "Fixture.tuple")
+    [.call (.ident "fst") [.ident "a1"], .call (.ident "snd") [.ident "a1"]]) =
+  .error (.unknownIdent "a1")
+
+#guard readEff tupleSig tupleSpell 1 (.call (.ident "Fixture.tuple")
+    [.call (.ident "fst") [.ident "a0"], .call (.ident "snd") [.ident "a0"],
+      .ident "first", .ident "second"]) =
+  .ok (.callback true (.var 0))
+
+-- Components of two different identifiers are an ordinary pair.
+#guard readEff tupleSig tupleSpell 2 (.call (.ident "Fixture.tuple")
+    [.call (.ident "fst") [.ident "a0"], .call (.ident "snd") [.ident "a1"]]) =
+  .ok (.perform false (.app "pair" (.cons (.app "fst" (.cons (.var 0) .nil))
+    (.cons (.app "snd" (.cons (.var 1) .nil)) .nil))))
+
+#guard readEff tupleSig tupleSpell 1 (.call (.ident "Fixture.tuple") [.ident "a0", .int 7]) =
+  .ok (.perform false (.app "pair" (.cons (.var 0) (.cons (.lit (.nat 7)) .nil))))
+
+-- Trailing names are matched exactly and in order: a misordered suffix is no row, so the
+-- call is read as an atom application and refused on its first non-term.
+#guard readEff tupleSig tupleSpell 1 (.call (.ident "Fixture.tuple")
+    [.ident "a0", .int 7, .ident "second", .ident "first"]) =
+  .error (.unknownIdent "second")
+
+-- The former one-request call, a one-argument call with trailing names, and three
+-- plain arguments are not tuple readings.
+#guard readEff tupleSig tupleSpell 1 (.call (.ident "Fixture.tuple") [.ident "a0"]) =
+  .error (.arity "Fixture.tuple")
+
+#guard readEff tupleSig tupleSpell 1 (.call (.ident "Fixture.tuple")
+    [.ident "a0", .ident "first", .ident "second"]) = .error (.arity "Fixture.tuple")
+
+#guard readEff tupleSig tupleSpell 1 (.call (.ident "Fixture.tuple") [.ident "a0", .int 7, .int 8]) =
+  .ok (.yieldError (.app "Fixture.tuple"
+    (.cons (.var 0) (.cons (.lit (.nat 7)) (.cons (.lit (.nat 8)) .nil)))))
+
+-- A call row does not accept the tuple reading.
+#guard readEff sig spell 1 (.call (.ident "Ref.get") [.ident "a0", .int 1]) =
+  .error (.arity "Ref.get")
+
+-- The former wrapper is an unknown atom whose first argument is no term.
+#guard readEff tupleSig tupleSpell 1 (.call (.ident "Reflect.apply")
+    [.ident "Fixture.tuple", .ident "undefined", .ident "a0"]) =
+  .error (.unknownIdent "Fixture.tuple")
+
+#guard readEff tupleSig tupleSpell 0 (.ident "Reflect.apply") =
+  .error (.unknownIdent "Reflect.apply")
+
+#guard readable tupleSig tupleSpell 0 (.yieldError (.app "Reflect.apply" .nil)) = true
+
+-- Every old native one-request tuple call is rejected by the row parser.
+#guard [NativeOp.refSet, .refGetAndSet, .refSetAndGet, .deferredSucceed, .deferredFail].all
+    fun op => decide (readEff nativeSignature nativeSpell 1
+      (.call (.ident op.row.spelling)
+        [.call (.ident "pair") [.ident "a0", .int 7]]) = .error (.arity op.row.spelling))
+
+#guard [NativeOp.refSet, .refGetAndSet, .refSetAndGet, .deferredSucceed, .deferredFail].all
+    fun op => decide (roundTrip nativeSignature nativeSpell 1
+      (.perform op (.app "pair" (.cons (.var 0) (.cons (.lit (.nat 7)) .nil)))) =
+      .ok (.perform op (.app "pair" (.cons (.var 0) (.cons (.lit (.nat 7)) .nil)))))
+
+-- A native request tuple may pass through a bound variable before the call.
+open Effect4.Api in
+#guard roundTrip
+    (.bind (.perform .deferredMake (.lit .unit))
+      (.bind (.succeed (.app "pair" (.cons (.var 0) (.cons (.lit (.nat 7)) .nil))))
+        (.perform .deferredSucceed (.var 1)))) =
+  .ok (.bind (.perform .deferredMake (.lit .unit))
+    (.bind (.succeed (.app "pair" (.cons (.var 0) (.cons (.lit (.nat 7)) .nil))))
+      (.perform .deferredSucceed (.var 1))))
 
 /-! ## Exits, thunks and rows -/
 
@@ -209,16 +400,64 @@ theorem lawful : LawfulSpelling sig spell where
 #guard roundTrip sig spell 0 (.withFiber (.fork (.succeed (.lit (.nat 1))) ⟨true, true, .inherit⟩))
   = .ok (.withFiber (.fork (.succeed (.lit (.nat 1))) ⟨true, true, .inherit⟩))
 
-#guard roundTrip sig spell 1 (.withFiber (.forkIn (.succeed (.lit (.nat 1))) ⟨true, false, .inherit⟩ (.var 0)))
-  = .ok (.withFiber (.forkIn (.succeed (.lit (.nat 1))) ⟨true, false, .inherit⟩ (.var 0)))
+-- `Effect.forkIn` and `Effect.forkScoped` fork a *daemon* in rc.112
+-- (`internal/effect.ts:5366` passes `true` for `forkUnsafe`'s `daemon`, `:5264-5269`;
+-- `:5406` routes `forkScoped` through `forkIn`), so that is the image they read back into
+-- and round-trip on (`E4-CHECK-CE-015`).
+#guard roundTrip sig spell 1 (.withFiber (.forkIn (.succeed (.lit (.nat 1))) ⟨true, true, .inherit⟩ (.var 0)))
+  = .ok (.withFiber (.forkIn (.succeed (.lit (.nat 1))) ⟨true, true, .inherit⟩ (.var 0)))
 
-#guard roundTrip sig spell 0 (.withFiber (.forkScoped (.succeed (.lit (.nat 1))) ⟨true, false, .interruptible⟩))
-  = .ok (.withFiber (.forkScoped (.succeed (.lit (.nat 1))) ⟨true, false, .interruptible⟩))
+#guard roundTrip sig spell 0 (.withFiber (.forkScoped (.succeed (.lit (.nat 1))) ⟨true, true, .interruptible⟩))
+  = .ok (.withFiber (.forkScoped (.succeed (.lit (.nat 1))) ⟨true, true, .interruptible⟩))
 
 /-! ## `withFiber`: the handle actions -/
 
 #guard roundTrip sig spell 2 (.withFiber (.runIn (.var 0) (.var 1)))
   = .ok (.withFiber (.runIn (.var 0) (.var 1)))
+
+-- The runIn adapter adds no binder to either source term's lexical environment.
+#guard roundTrip sig spell 2 (.bind (.succeed (.var 0))
+    (.withFiber (.runIn (.var 2) (.var 1)))) =
+  .ok (.bind (.succeed (.var 0)) (.withFiber (.runIn (.var 2) (.var 1))))
+
+#guard headOf "Effect.withFiber" = some .withFiber
+
+#guard readEff sig spell 2 (.call (.ident "Effect.withFiber")
+    [.arrowBlock [] [.exprStmt (.call (.ident "Fiber.runIn") [.ident "a0", .ident "a1"]),
+      .ret (.ident "Effect.void")]]) = .ok (.withFiber (.runIn (.var 0) (.var 1)))
+
+#guard readEff sig spell 2 (.call (.ident "Fiber.runIn") [.ident "a0", .ident "a1"]) =
+  .error (.arity "Fiber.runIn")
+
+#guard readEff sig spell 2 (.call (.ident "Effect.withFiber")
+    [.arrowBlock ["a2"] [.exprStmt (.call (.ident "Fiber.runIn") [.ident "a0", .ident "a1"]),
+      .ret (.ident "Effect.void")]]) = .error (.shape "runIn")
+
+#guard readEff sig spell 2 (.call (.ident "Effect.withFiber")
+    [.arrowBlock [] [.exprStmt (.call (.ident "Fiber.runIn") [.ident "a0", .ident "a1"]),
+      .exprStmt (.ident "extra"), .ret (.ident "Effect.void")]]) = .error (.shape "runIn")
+
+#guard readEff sig spell 2 (.call (.ident "Effect.withFiber")
+    [.arrowBlock [] [.exprStmt (.call (.ident "Fiber.runIn") [.ident "a0", .ident "a1"]),
+      .ret (.ident "undefined")]]) = .error (.shape "runIn")
+
+#guard readEff sig spell 2 (.call (.ident "Effect.withFiber")
+    [.arrowBlock [] [.exprStmt (.call (.ident "Fiber.runIn") [.ident "a0", .ident "a1"]),
+      .ret (.call (.ident "Effect.succeed") [.ident "undefined"])]]) = .error (.shape "runIn")
+
+#guard readEff sig spell 2 (.call (.ident "Effect.withFiber")
+    [.arrowBlock [] [.exprStmt (.call (.ident "Fiber.other") [.ident "a0", .ident "a1"]),
+      .ret (.ident "Effect.void")]]) = .error (.shape "runIn")
+
+#guard readEff sig spell 2 (.call (.ident "Effect.withFiber")
+    [.arrow none (.call (.ident "Fiber.runIn") [.ident "a0", .ident "a1"])]) =
+  .error (.shape "runIn")
+
+#guard readEff sig spell 0 (.call (.ident "Effect.withFiber")
+    [.arrowBlock [] [.exprStmt (.call (.ident "Fiber.runIn") [.ident "a0", .ident "a1"]),
+      .ret (.ident "Effect.void")]]) = .error (.unknownIdent "a0")
+
+#guard readable sig spell 0 (.yieldError (.app "Effect.withFiber" .nil)) = false
 
 #guard roundTrip sig spell 1 (.withFiber (.interrupt (.var 0)))
   = .ok (.withFiber (.interrupt (.var 0)))
@@ -268,11 +507,20 @@ A `daemon` flag on a scoped fork has no field in the options object; a `perform`
 of a `unit`-request row or a value row is dropped. Each is `readable = false`, and the reader
 answers the program the printer kept. -/
 
-#guard readable sig spell 0 (.withFiber (.forkScoped (.succeed (.lit (.nat 1))) ⟨true, true, .inherit⟩))
+-- The retained negative: a *non-daemon* `forkIn`/`forkScoped` action has no rc.112 spelling,
+-- so it is outside the readable image and the reader answers the daemon program the printed
+-- text means. The refusal is kept, only its side is the source's (`E4-CHECK-CE-015`).
+#guard readable sig spell 0 (.withFiber (.forkScoped (.succeed (.lit (.nat 1))) ⟨true, false, .inherit⟩))
   = false
 
-#guard roundTrip sig spell 0 (.withFiber (.forkScoped (.succeed (.lit (.nat 1))) ⟨true, true, .inherit⟩))
-  = .ok (.withFiber (.forkScoped (.succeed (.lit (.nat 1))) ⟨true, false, .inherit⟩))
+#guard roundTrip sig spell 0 (.withFiber (.forkScoped (.succeed (.lit (.nat 1))) ⟨true, false, .inherit⟩))
+  = .ok (.withFiber (.forkScoped (.succeed (.lit (.nat 1))) ⟨true, true, .inherit⟩))
+
+#guard readable sig spell 1 (.withFiber (.forkIn (.succeed (.lit (.nat 1))) ⟨true, false, .inherit⟩ (.var 0)))
+  = false
+
+#guard roundTrip sig spell 1 (.withFiber (.forkIn (.succeed (.lit (.nat 1))) ⟨true, false, .inherit⟩ (.var 0)))
+  = .ok (.withFiber (.forkIn (.succeed (.lit (.nat 1))) ⟨true, true, .inherit⟩ (.var 0)))
 
 #guard readable sig spell 1 (.callback 0 (.var 0)) = false
 
@@ -298,6 +546,11 @@ open Effect4.Api in
 open Effect4.Api in
 #guard roundTrip (.bind (.perform .deferredMake (.lit .unit)) (.callback .deferredAwait (.var 0)))
   = .ok (.bind (.perform .deferredMake (.lit .unit)) (.callback .deferredAwait (.var 0)))
+-- the timer (A4): `Effect.sleep(5)` is the async row's callback, `Effect.currentTimeMillis`
+-- the value row
+open Effect4.Api in
+#guard roundTrip (.bind (.callback .sleep (.lit (.nat 5))) (.perform .clockNow (.lit .unit)))
+  = .ok (.bind (.callback .sleep (.lit (.nat 5))) (.perform .clockNow (.lit .unit)))
 
 /-! ## The corpus: every program the generator writes, through `Api.print` and `Api.read`
 
@@ -311,7 +564,10 @@ one comes back unchanged, so on this corpus `readable` is exact, not merely suff
 
 #guard (Test.Program.Gen.corpus 400 4).length = 400
 
-#guard ((Test.Program.Gen.corpus 400 4).filter Effect4.Api.readable).length = 324
+-- The join extended both the reader and the generator's draws (345); the host rows slice's
+-- `mergeAll` draw and reference pass move the seeded corpus again: 340 readable. Request
+-- erasure and scoped-fork daemon erasure remain unchanged.
+#guard ((Test.Program.Gen.corpus 400 4).filter Effect4.Api.readable).length = 340
 
 #guard (Test.Program.Gen.corpus 400 4).all fun p =>
   !Effect4.Api.readable p || decide (Effect4.Api.roundTrip p = .ok p)
@@ -323,5 +579,58 @@ one comes back unchanged, so on this corpus `readable` is exact, not merely suff
 
 #guard ((Test.Program.Gen.corpus 400 4).filter fun p =>
   !Effect4.Api.readable p && decide (Effect4.Api.roundTrip p = .ok p)).length = 0
+
+/-! ## The join: keys and all eight layer forms
+
+Layer effects have their own empty environment, even when provision occurs below
+an outer binder. The service-key tests retain both numbers and the exact type.
+-/
+
+private def joinKey : Effect4.ServiceKey := ⟨⟨4⟩, ⟨4⟩⟩
+private def joinValue : Eff NativeOp := .succeed (.lit (.nat 7))
+private def joinLayers : List (LayerTerm NativeOp) :=
+  [ .succeed joinKey (.nat 7)
+  , .effect joinKey joinValue
+  , .effectDiscard joinValue
+  , .provide (.effect joinKey joinValue) (.succeed joinKey (.nat 8))
+  , .provideMerge (.effect joinKey joinValue) (.succeed joinKey (.nat 8))
+  , .merge (.succeed joinKey (.nat 7)) (.succeed ⟨⟨5⟩, ⟨5⟩⟩ (.bool true))
+  , .fresh (.effect joinKey joinValue)
+  , .orDie (.effect joinKey joinValue) ]
+
+#guard roundTrip nativeSignature nativeSpell 0 (.service joinKey) = .ok (.service joinKey)
+#guard roundTrip nativeSignature nativeSpell 0
+  (.provideService joinKey (.lit (.nat 7)) (.service joinKey)) =
+  .ok (.provideService joinKey (.lit (.nat 7)) (.service joinKey))
+#guard joinLayers.length = 8
+#guard joinLayers.all fun layer => [false, true].all fun isLocal =>
+  let program := Eff.provideLayer layer isLocal (.service joinKey)
+  readable nativeSignature nativeSpell 0 program &&
+    decide (roundTrip nativeSignature nativeSpell 0 program = .ok program)
+#guard roundTrip nativeSignature nativeSpell 0
+  (.bind joinValue (.provideLayer
+    (.effect joinKey (.bind joinValue (.succeed (.var 0)))) true (.succeed (.var 0)))) =
+  .ok (.bind joinValue (.provideLayer
+    (.effect joinKey (.bind joinValue (.succeed (.var 0)))) true (.succeed (.var 0))))
+
+#guard [Effect4.ServiceKey.mk ⟨0⟩ ⟨0⟩, ⟨⟨1⟩, ⟨4⟩⟩, ⟨⟨4⟩, ⟨4⟩⟩,
+    ⟨⟨5⟩, ⟨5⟩⟩, ⟨⟨6⟩, ⟨6⟩⟩, ⟨⟨7⟩, ⟨7⟩⟩].all fun key =>
+  decide (roundTrip nativeSignature nativeSpell 0 (.service key) = .ok (.service key))
+#guard readKey nativeSignature (.call (.generic (.ident "Context.Service") ["boolean"])
+  [.str "k4_4"]) = .error (.shape "service key")
+#guard readKey nativeSignature (.call (.generic (.ident "Context.Service") ["number"])
+  [.str "k04_4"]) = .error (.shape "service key")
+#guard readKey nativeSignature (.call (.ident "Context.Service") [.str "k4_4"]) =
+  .error (.shape "service key")
+#guard readKey nativeSignature (printKey nativeSignature ⟨⟨12345678901234567890⟩, ⟨4⟩⟩) =
+  .ok ⟨⟨12345678901234567890⟩, ⟨4⟩⟩
+
+#print axioms Effect4.Program.readKey_printKey
+#print axioms Effect4.Program.readKey_exact
+#print axioms Effect4.Program.read_print_layer
+#print axioms Effect4.Program.read_print
+#print axioms Effect4.Program.read_exact
+#print axioms Effect4.Program.roundTrip_eq
+#print axioms Effect4.Program.roundTrip_weaken
 
 end Test.Codegen.ReadContract

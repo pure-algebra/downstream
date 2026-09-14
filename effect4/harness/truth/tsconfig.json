@@ -1,0 +1,30 @@
+{
+  "//": [
+    "DI-49: type-check the printed modules, their prelude, the actual recorder, and the new session boundary under the pinned compiler.",
+    "check-truth.py keeps fresh generated modules beside this config and explicitly names the original recorder/session sources so their relative imports retain the repository topology.",
+    "TracedScheduler delegates to the pinned MixedScheduler and wraps only dispatch recording; the focused scheduler comparison checks the observed event sequences.",
+    "These are finite compiler/execution receipts, not a host adequacy theorem."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": [
+      "bun"
+    ]
+  },
+  "include": [
+    "prelude.ts",
+    "generated",
+    "run-truth.ts",
+    "session/*.ts"
+  ]
+}

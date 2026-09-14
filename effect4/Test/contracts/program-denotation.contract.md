@@ -7,13 +7,13 @@ without `onExit` — and its rows are SEEDED.
 
 Implementation fences (five new modules; no existing module changes beyond the root import
 lists):
-`src/Effect4/Program/Typed.lean`,
-`src/Effect4/Machine/StoresLaws.lean`,
-`src/Effect4/Program/Denote.lean`,
-`src/Effect4/Program/Agreement.lean` (the frame machine's local run reaches the meaning),
-`src/Effect4/Program/Agreement/Machine.lean` (the command loop is the local run;
+`src/Effect4/Laws/Program/Typed.lean`,
+`src/Effect4/Laws/Machine/StoresLaws.lean`,
+`src/Effect4/Laws/Program/Denote.lean`,
+`src/Effect4/Laws/Program/Agreement.lean` (the frame machine's local run reaches the meaning),
+`src/Effect4/Laws/Program/Agreement/Machine.lean` (the command loop is the local run;
 `run_eq_meaning`),
-`src/Effect4/Program/Progress.lean` (the first join: `answer_typed`, `progress`)
+`src/Effect4/Laws/Program/Progress.lean` (the first join: `answer_typed`, `progress`)
 
 Lean batteries:
 `Test/Program/TypedContract.lean`,
@@ -57,7 +57,7 @@ This packet freezes three bounded facts and states one theorem it does not prove
    compositional equations of the resulting `meaning`, derived from the algebra's
    `interpret_bind` and `interpret_perform`.
 
-The theorem it states, proved in `src/Effect4/Program/Agreement/Machine.lean`, is
+The theorem it states, proved in `src/Effect4/Laws/Program/Agreement/Machine.lean`, is
 
 ```lean
 theorem run_eq_meaning (e : NativeEff) (fuel : Nat) (hs : Straight e = true)
@@ -72,7 +72,7 @@ whose executable oracle, one program at a time, is the guard set of
 without `onExit` (`E4-DEN-CE-004`); the repair the same evening put `onExit` in, and
 `Plain_eq_Straight` lets the theorem read `Straight`. `depth` and `steps` are the two
 computable structural measures of
-`src/Effect4/Program/Agreement.lean` — the fuel the compile's children cost, and a bound on
+`src/Effect4/Laws/Program/Agreement.lean` — the fuel the compile's children cost, and a bound on
 the local steps a plain program takes. The op budget is not a hypothesis: the first landing
 carried `steps e + 2 ≤ defaultBudget` to keep the yield off the proved path, and the repair
 the same night took it out — past the budget the root parks on a yield, `flush` fires its
@@ -85,25 +85,83 @@ Not modelled here: generators, `whileLoop`, `choose`, the masks, `yieldNow`, `ca
 `awaitFiber`, `withFiber`, `scoped`, `acquireRelease`, async rows, program rows, a second
 fiber, the trace, the cause component of a reified failed exit (`TYPED-FB-CAUSE`), the
 stored program of a completed Deferred (`STORES-FB-COMPLETION`), and the types `.int`,
-`.string`, `.option`, `.except`, `.causeOf`, `.never` and unknown handle targets, which no
-value of this cut inhabits (`TYPED-FB-INT`, `TYPED-FB-STRING`).
+`.except`, `.causeOf`, `.never` and unknown handle targets, which no value of this cut
+inhabits at the empty external allocation table (`TYPED-FB-INT`). `.string` and `.option` are inhabited since the DB-15 amendment
+below.
 
 ## ENSURES
+
+D5 evaluator amendment (2026-09-06): `Api.run` and replay select the frame
+evaluator that refreshes source construction against completed fibers. The
+straight local interpretation uses `interpAt root []`; straight programs
+have no fork or external completion, and start with the empty view. The
+Agreement connects that local interpretation to the selected evaluator while
+retaining the displayed public theorem and `2 * steps e + 6` bound. Its focused
+battery passes 87 guards, including the 2100-bind case that yields twice;
+69 dependency receipts and the full D5 gate pass. This amendment changes no
+public premise or admitted fragment.
+
+DB-15 amendment (2026-09-08, the host rows slice, decision 3): strings are machine
+values on the native route. `Lit.toVal (.str s)` answers `some (.str s)`; `Val.hasTy`
+inhabits `.string` with the carrier's `str` frame and `.option t` with `none` and a
+`some` of a `t` (`Val.hasTy_string_inv`, `Val.hasTy_option_inv`); `Term.noStr` and
+`Terms.noStr` are deleted; `Lit.toVal_isSome`, `evalTerm_isSome` and `evalTerms_isSome`
+lose their `str` premise. `E4-TYPED-CE-001` is retired with its ID kept. No other public
+premise moves; the frozen statements below read with this amendment applied.
+
+Error-alphabet amendment (2026-09-09, the owner's ruling before host-rows step 5; DB-15):
+`Machine.Err` gains one appended constructor `tagged (tag message : String)`, image
+`ctor 2 [str tag, str message]`; the two older constructors keep their images and every
+golden its bytes. `errOf` reads exactly the two-string list `Val.list [.str t, .str m]` into
+it and every other non-numeric value stays `boom`; `errAdmits` admits a tagged failure where
+the row's error type admits the pair. `meaning (.fail e)` and `meaning (.yieldError e)` below
+are unchanged: they name `errOf` symbolically. `TYPED-FB-CAUSE` (the error column of a
+reified exit is not checked) and the `.causeOf` refusal are unchanged; `orDie` on a tagged
+error dies as `badName` (`ORDIE-FB-TAGGED`, `E4-HOST-CE-003`).
+
+S2 cutover amendment (2026-09-09, DI-62 and DI-31; supersedes those historical error
+refusals): append `Err.text` at tag 3 and `Defect.error` at tag 5, retaining all older
+encodings. `supportedErrTy` admits `never`, `nat`, `string`, `prod string string`, and
+unions of supported columns. All three failure introductions (`fail`, `yieldError`,
+each `CauseTerm.fail`) require that predicate. The admitted value's `errOf` conversion
+must have the exact inverse `valOfErr`, for every allocation table; unsupported raw
+execution remains defined and can still collapse to `boom`.
+
+`Val.hasTy` now checks every failure reason inside `.causeOf e` and failed `.exitOf a e`
+through the shared parameterized cause fold. Defects and interruptions remain outside
+`E`. The public two-argument `hasTyCause` wrapper stays fixed; its bridge to the new
+membership arm and allocation monotonicity are required obligations. Fiber membership
+still checks shape only. `orDieCause` retains natural-to-`user` and raw-`boom`-to-`badName`
+behavior; text and two-string errors become `Defect.error` carrying the exact original
+error. The SQL truth comparison must reject a changed represented defect payload, not
+only compare its reason kind. Historical Boolean `pYieldError` bytes remain in the wire
+corpus with an explicit refusal verdict; the typed OCaml API requires the corresponding
+closed error witness. Fresh command and axiom receipts own verification status.
+
+Ratified host-rows step 4 amendment (2026-09-09, slice §2.2): `Val.hasTy` gains a
+trailing allocation table, defaulting to `[]`. A byte-7 handle must name an allocated
+entry with exactly the declared target spelling. The full three-argument signature
+and the existing two-argument call are both checked in `Test/Program/TypedContract.lean`.
+The `Fits`, term-typing, totality and sync-decoding statements below retain the empty
+table and all their existing premises. The new external-answer laws check the returned
+value against the allocation table produced by that answer; they do not generalize the
+old closed-term statements to arbitrary external environments.
 
 The three lanes owe exactly these public facts. Every theorem is at `propext`/`Quot.sound`.
 
 Lane 1, `Effect4.Program`:
 
-1. `Val.hasTy : Val → Ty → Bool` with the table of the plan §2.1; `.union` is the disjunction
-   of its members.
+1. `Val.hasTy : Val → Ty → List String → Bool`, with a default empty allocation table,
+   the native types of the plan §2.1 and the external handle arm of the amendment above;
+   `.union` is the disjunction of its members.
 2. `Fits env tys` is `List.Forall₂` of `hasTy`; `Fits.get?`, `Fits.length`, `Fits.append`.
-3. `Term.noStr`, `Terms.noStr`.
-4. `Lit.toVal_hasTy`; `Lit.toVal_isSome` for every literal but `str`.
+3. (Retired by the DB-15 amendment: `Term.noStr` and `Terms.noStr` are gone; every literal
+   evaluates.)
+4. `Lit.toVal_hasTy`; `Lit.toVal_isSome` for every literal.
 5. `nativeAtom_typed`: a typed atom application answers a value of the answer type.
 6. `evalTerm_hasTy`, `evalTerms_hasTy`: under `Fits`, a term that types and evaluates
    evaluates to a value of its type.
-7. `evalTerm_isSome`, `evalTerms_isSome`: under `Fits` and `noStr`, a term that types
-   evaluates.
+7. `evalTerm_isSome`, `evalTerms_isSome`: under `Fits`, a term that types evaluates.
 8. `syncOpOf_isSome`: a request value of a `sync` row's request type decodes.
 9. `syncOpOf_async_none`.
 
@@ -150,33 +208,56 @@ The agreement, `Effect4.Program.Agreement` (two modules, landed with the lanes):
     exit has that exit as its meaning at unchanged stores, which is what the fold case of
     `localRun_compile` reaches. The same correction (`E4-CHECK-CE-002`, `-003`) compiles
     `gen` and `whileLoop` to a `Suspend` at their point, answered by `suspendBodyAt`;
-    neither is plain, so `suspendBodyAt_of_at` now also excludes them
-    (`Plain.not_gen`, `Plain.not_whileLoop`) and nothing else here changes.
+    neither is plain, so `suspendBodyAt_of_at` excludes them
+    (`Plain.not_gen`, `Plain.not_whileLoop`). The authorized `E4-CHECK-CE-008`
+    correction makes a source `suspend` name its own point. Its thunk returns
+    `resolve root (p.child 0)` by `suspendBodyAt_suspend`, retaining any suspension
+    in the child. `suspendBodyAt_of_at` excludes source `suspend` too; the
+    `localRun_compile` suspend case uses the own-point clause and no longer
+    needs a special branch-body case. The final straight agreement statement
+    and its budget bound are unchanged.
 28. `PlainCode`/`PlainFrame` and `Quiet`: the compile of a plain program is plain code, every
     subterm of a plain root is plain, the hooks of `interpOf` answer plain code, the local
     step keeps the fiber plain, and every `syncOpStep` keeps the stores quiet (no resume
     owed, no waiter), so `Cmd.drainDue` is the identity.
-29. `finalizerOr_plain`: no plain stack answers an `onExit` frame, so `evaluatePrim` on a
-    plain fiber is the frame machine's `step`.
+29. Historical first-landing `finalizerOr_plain` excluded OnExit from plain
+    stacks. After its admission, `evaluatePrim_localStep` relates the actual
+    program-finalizer path as well as the pure frame step.
 30. `drive_localRun`: the command loop over the one fiber `Api.load` makes does what the
     local run does, at most two commands per local step, from any op count and any resume
     token: it owes the exit path, or — when the count reaches `defaultBudget` first — a
-    yield with the rest of the run still to do, at least `defaultBudget - 1` steps fewer
-    (`Owes`).
+    yield with the rest of the run still to do (`Owes` records the bound from
+    its incoming count). After the D7 resume step, each further round removes
+    at least `defaultBudget - 2` local steps.
 31. `run_eq_meaning`, above — since the same evening on `Straight` itself: `Plain` gained
     `onExit` and `Plain_eq_Straight`; the local step's exit arm `exitFrom` mirrors the
     machine's `finalizerOr`, the fiber carries its interruptible flag, and `maskStack` is the
     restoring frame the mask leaves (`E4-DEN-CE-004` repaired). And since the same night
     with no budget hypothesis (`E4-DEN-CE-005` repaired): `drive_loop_yield` — at the loop
-    with the count at the budget the root parks behind a fresh token with its primitive
-    queued on its own dispatcher (`Myield`); `fire_Myield` — `flush` fires that dispatcher,
-    the one task resumes the root on its guard and re-enters the loop at count zero;
+    with the count at the budget the loop enters the injected constant OnSuccess,
+    then Yield parks behind a fresh token (`Myield`). Its dispatcher carries
+    success unit, and the ordinary stack holds the saved primitive.
+    `fire_Myield_answer` fires that dispatcher and enters at count zero;
+    `fire_Myield` delivers the success through the saved frame and returns to
+    the program at count one;
     `flushAll_Myield` — the rounds of `flush` reach the exited machine, by induction on the
-    rounds, each round that yields again having spent at least `defaultBudget - 1` steps of
+    rounds, each round that yields again having spent at least `defaultBudget - 2` steps of
     the run; `replay_Mexit` — the tape `[evaluate, flush]` ends in the exited machine of the
-    meaning on either road.
+    meaning on either road. The internal flush bound pays one extra command
+    (`2 * n + 6`); the public `2 * steps e + 6` bound remains unchanged.
 
 The first join, `Effect4.Program.Progress` (landed the same evening):
+
+D4 OnExit amendment (2026-09-06, checked): the local exit step uses
+`finalizerCode`, with an ordinary success frame around cleanup, and an inner
+failure frame only when the body failed. The structural `steps` measure now
+adds 5 for OnExit (formerly 4) to cover that source checkpoint. The public
+formula `2 * steps e + 6` remains, with a correspondingly larger numerical
+premise for those programs. The old arbitrary combined-frame algebra law
+`step_ofExit_finalizer` stays valid; it no longer describes the generated
+cleanup wrapper. The local/command proof port and repaired-tree gate pass:
+282 jobs, 276 modules / 39,572 declarations at the unchanged ceiling/boundary.
+This closes the wrapper correction, not the remaining scoped or P3 obligations.
 
 32. `Stores.HeapNat`: every cell of the heap holds a `.nat`; decidable; `Stores.empty` has it.
 33. `answer_typed`: on a `HeapNat` store, a typed request decoded through `syncOpOf` that
@@ -185,6 +266,36 @@ The first join, `Effect4.Program.Progress` (landed the same evening):
 34. `syncOpOf_validIn`: a typed, valid request decodes to a valid operation.
 35. `progress`: under `WF`, `HeapNat`, a `sync` row, and a typed, valid request, the step
     exists, answers a typed and valid value, and keeps `WF` and `HeapNat`.
+
+The error-image and allocation lane, `Effect4.Program.ErrorImage` and the laws above `Typed`
+(landed 2026-09-09 in `23e5717` as S2's preparation; the instantiation of the folds into
+`Val.hasTy`'s `.causeOf` and `.exitOf` arms is S2's cutover and is **not** claimed here):
+
+36. Allocation extension: `Extends`, `extends_append`; `hasTy_mono` — a value typed against an
+    allocation table stays typed against any extension of it — and `hasTy_append`, both by
+    induction on `Ty`, at `[propext, Quot.sound]`.
+37. Environments at an allocation state: `FitsWith`, `FitsIn allocated`, and
+    `Fits_iff_FitsIn_nil` — agreement with `Fits` at `[]`, so no statement above moves and
+    `Fits` itself is byte-unchanged — with `FitsWith.append`, `FitsIn.append`, `FitsIn.mono`;
+    and `fits_childWith` for a compiled `Point`, which lives in
+    `src/Effect4/Laws/Program/Admit.lean` because `Point` is declared above `Effect4.Program.Typed`
+    and the value-typing laws must not depend on the compiler.
+38. The error image: `valOfErr`, and the folds `reasonAdmits` and `causeAdmits` parameterised by
+    a payload-membership function (`src/Effect4/Program/ErrorImage.lean`, below `Native`), with
+    `reasonAdmits_congr` and `causeAdmits_congr` (no axioms at all) so that two spellings of the
+    membership argument are interchangeable in later proofs. The round trips are
+    `errOf_valOfErr` and `valOfErr_errOf`, and `errAdmits_eq_reasonAdmits` says the existing
+    `errAdmits` **is** that fold at `Val.hasTy`, read the other way; `reasonAdmits_hasTy`,
+    `causeAdmits_hasTy`, `hasTyCause`, `hasTyCause_exitErr_fold` and `hasTyCause_exitErr` stand
+    beside them.
+39. The failure branch of an external answer: `external_error_typed` (`[propext]`) and
+    `external_oracle_error_typed`, beside the three success-only admission laws. The failure
+    branch of `admitAnswer` is a short proof from `admitted_row` with no induction — the earlier
+    description of it as a definitional unfolding is corrected.
+
+The battery for 36–39 is `Test/Program/TypedContract.lean:130-201` (the `@`-ascriptions at their
+exact propositions) with its `#print axioms` twin; every declaration is within
+`[propext, Quot.sound]` and none reaches `Classical.choice`.
 
 ## Algebra and dependency spine
 
@@ -212,7 +323,7 @@ appears only in the batteries.
 
 | ID | Status | Attacked statement | Witness | Forced repair |
 | --- | --- | --- | --- | --- |
-| `E4-TYPED-CE-001` | SEEDED | A term that types always evaluates | `.lit (.str "x")` types as `.string`; `Lit.toVal` answers `none` | `evalTerm_isSome` carries `Term.noStr`; `evalTerm_hasTy` is stated on `evalTerm … = some v` |
+| `E4-TYPED-CE-001` | RETIRED | A term that types always evaluates | retired 2026-09-08 (DB-15): `.lit (.str "x")` evaluates to `Val.str "x"`; the statement is now the theorem `evalTerm_isSome` with no `noStr` premise | none; the ID is kept and never reused |
 | `E4-TYPED-CE-002` | SEEDED | `Val.nat` inhabits `.int` because both print as `number` | `Val.hasTy (.nat 1) .int = false`; `Ty.render .nat = Ty.render .int` | `.int` is a refusal of the value typing (`TYPED-FB-INT`); the printer's identification is not the typing's |
 | `E4-STORES-CE-001` | SEEDED | `syncOpStep` is total | `syncOpStep (.refGet ⟨0⟩) Stores.empty = none` | `syncOpStep_isSome_of_valid` carries `SyncOp.validIn` |
 | `E4-STORES-CE-002` | SEEDED | A valid request's answer is valid without a heap invariant | heap `[Val.cell ⟨9⟩]`: `refGet ⟨0⟩` answers `cell ⟨9⟩`, invalid | `syncOpStep_answer_valid` carries `Stores.WF` |
@@ -220,6 +331,7 @@ appears only in the batteries.
 | `E4-DEN-CE-002` | SEEDED | The store handler may fail on a key the store never minted | `storeHandler.handle (.refGet ⟨5⟩) Stores.empty = (Val.unit, Stores.empty)`, as `stores.syncState` falls back to `syncValue` | the handler's `none` arm is the machine's fallback, never a defect |
 | `E4-DEN-CE-003` | SEEDED | The denotation and the machine agree on the trace | the trace of `Api.run pBindSync 400` holds `frame` events; `denote` performs only store operations | `run_eq_meaning` is stated on exit and stores; trace agreement is a later row under a mask |
 | `E4-STORES-CE-003` | SEEDED | `Stores.WF` covers the program a completed Deferred stores | `deferredCompleteWith ⟨0⟩ (Completion.ofRefGet ⟨9⟩)` on a fresh cell is valid, steps, and leaves a `WF` store whose stored program reads a cell the heap never minted | `WF` is not widened (`STORES-FB-COMPLETION`) |
+| `E4-STORES-CE-004` | SEEDED | The memo world's refcount law holds by store steps alone | it needs the build-after-miss protocol (`Stores.MemoKeysNodup`); a second `memoBuild` on a present layer leaves an unobserved entry after a release (`StoresLawsContract` §Rows) |
 | `E4-DEN-CE-004` | SEEDED | `run_eq_meaning` covers the whole straight-line fragment | `Straight pOnExit = true`; `Plain pOnExit` was `false` at the first landing and is `true` since the repair (`Plain_eq_Straight`) | the finalizer mask is modelled (`exitFrom`, `maskStack`); the theorem is stated on `Straight` |
 | `E4-PROGRESS-CE-001` | SEEDED | `answer_typed` needs no more than `Stores.WF` | the heap `[Val.bool true]` is `WF`; `refGet ⟨0⟩` answers `Val.bool true`, not a `.nat` | `answer_typed` carries `Stores.HeapNat` |
 | `E4-PROGRESS-CE-002` | SEEDED | `HeapNat` is preserved by every valid step | `refMake (Val.bool true)` is valid on the empty store, steps, and leaves a heap that is not `HeapNat` | `step_heapNat` is stated on a typed request |

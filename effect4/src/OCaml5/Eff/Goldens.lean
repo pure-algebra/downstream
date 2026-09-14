@@ -170,6 +170,14 @@ def opV : NativeOp → V
   | .deferredFail => .ctor ``NativeOp.deferredFail []
   | .deferredAwait => .ctor ``NativeOp.deferredAwait []
   | .scopeMake s => .ctor ``NativeOp.scopeMake [stratV s]
+  | .sleep => .ctor ``NativeOp.sleep []
+  | .clockNow => .ctor ``NativeOp.clockNow []
+  | .external i => .ctor ``NativeOp.external [.nat i]
+
+def keyV (k : ServiceKey) : V :=
+  .struct ``Effect4.ServiceKey
+    [ ("name", .struct ``Effect4.ServiceName [("value", .nat k.name.value)])
+    , ("service", .struct ``Effect4.ServiceTypeCode [("value", .nat k.service.value)]) ]
 
 mutual
 partial def effV : Eff NativeOp → V
@@ -197,6 +205,23 @@ partial def effV : Eff NativeOp → V
   | .scoped b => .ctor ``Eff.scoped [effV b]
   | .acquireRelease a r => .ctor ``Eff.acquireRelease [effV a, effV r]
   | .choose site l r => .ctor ``Eff.choose [.nat site, effV l, effV r]
+  | .provideLayer l isLocal b => .ctor ``Eff.provideLayer [layerV l, .bool isLocal, effV b]
+  | .service k => .ctor ``Eff.service [keyV k]
+  | .provideService k v b => .ctor ``Eff.provideService [keyV k, termV v, effV b]
+partial def layerV : LayerTerm NativeOp → V
+  | .succeed k v => .ctor ``LayerTerm.succeed [keyV k, litV v]
+  | .effect k b => .ctor ``LayerTerm.effect [keyV k, effV b]
+  | .effectDiscard b => .ctor ``LayerTerm.effectDiscard [effV b]
+  | .provide s t => .ctor ``LayerTerm.provide [layerV s, layerV t]
+  | .provideMerge s t => .ctor ``LayerTerm.provideMerge [layerV s, layerV t]
+  | .merge l r => .ctor ``LayerTerm.merge [layerV l, layerV r]
+  | .fresh i => .ctor ``LayerTerm.fresh [layerV i]
+  | .orDie i => .ctor ``LayerTerm.orDie [layerV i]
+  | .ref target => .ctor ``LayerTerm.ref [.list (target.map .nat)]
+  | .mergeAll ls => .ctor ``LayerTerm.mergeAll [layersV ls]
+partial def layersV : LayerTerms NativeOp → V
+  | .nil => .ctor ``LayerTerms.nil []
+  | .cons h t => .ctor ``LayerTerms.cons [layerV h, layersV t]
 partial def stmtV : Stmt NativeOp → V
   | .bindYield e => .ctor ``Stmt.bindYield [effV e]
   | .yieldDiscard e => .ctor ``Stmt.yieldDiscard [effV e]
@@ -229,11 +254,6 @@ partial def actionV : ActionTerm NativeOp → V
   | .getId => .ctor ``ActionTerm.getId []
   | .closeScope s e => .ctor ``ActionTerm.closeScope [termV s, termV e]
 end
-
-def keyV (k : ServiceKey) : V :=
-  .struct ``Effect4.ServiceKey
-    [ ("name", .struct ``Effect4.ServiceName [("value", .nat k.name.value)])
-    , ("service", .struct ``Effect4.ServiceTypeCode [("value", .nat k.service.value)]) ]
 
 def effTyV (t : EffTy) : V :=
   .struct ``EffTy [("answer", tyV t.answer), ("error", tyV t.error), ("requires", .list (t.requires.elems.map keyV))]
@@ -346,6 +366,51 @@ def pIllCallback : P := .bind (.perform .refMake (n 0)) (.callback .refGet (v 0)
 def pIllStep : P := .whileLoop (n 0) (.app "lt" (ts [v 0, n 3])) (.lit (.bool true)) (.yieldNow 0)
 def pIllInterruptor : P := .failCause (.interrupt (some (.lit (.bool true))))
 
+/-- The join (2026-09-07): a layer of every constructor, provided to a body that reads a
+service and provides one; the keys are the truth fixtures' spellings
+(`harness/truth/Truth.lean`: codes 4 `nat`, 5 `bool` at `nativeServiceTy`). -/
+def kA : ServiceKey := ⟨⟨4⟩, ⟨4⟩⟩
+def kB : ServiceKey := ⟨⟨5⟩, ⟨4⟩⟩
+def kC : ServiceKey := ⟨⟨6⟩, ⟨5⟩⟩
+def layerAll : LayerTerm NativeOp :=
+  .orDie (.fresh (.merge
+    (.provide (.effect kA (.succeed (n 7))) (.succeed kB (.nat 1)))
+    (.provideMerge (.effectDiscard (.succeed u)) (.succeed kC (.bool true)))))
+def pProvide : P :=
+  .provideLayer layerAll false (.bind (.service kA) (.provideService kB (n 2) (.service kB)))
+
+/-- The timer (A4, 2026-09-08): a sleep, then the clock read. -/
+def pSleep : P := .bind (.callback .sleep (n 3)) (.perform .clockNow u)
+
+def ls (xs : List (LayerTerm NativeOp)) : LayerTerms NativeOp := xs.foldr .cons .nil
+
+/-- The memo fix (the host rows slice, 2026-09-08): one layer at two sites, the second a
+reference to the first's path (`[0, 0]`: the root `provideLayer`'s layer is child `0`, the
+merge's left child `0`), so both sites share one memo entry. -/
+def pDiamond : P :=
+  .provideLayer (.merge (.effect kA (.succeed (n 7))) (.ref [0, 0])) false (.service kA)
+
+/-- The n-ary merge (the host rows slice): three layers built as siblings under one parallel
+parent scope. -/
+def pMergeAll : P :=
+  .provideLayer
+    (.mergeAll (ls [.succeed kB (.nat 1), .effect kA (.succeed (n 7)), .succeed kC (.bool true)]))
+    false (.bind (.service kA) (.service kC))
+
+/-- External constructor coverage. A supplied row table types this callback; the empty
+built-in table deliberately does not. -/
+def pExternal : P := .callback (.external 0) u
+
+/-- DI-54: the bound `never` used to satisfy an out-of-domain external placeholder.
+Both checkers must refuse this program at the empty row table. -/
+def pIllExternalDomain : P := .bind (.fail (n 1)) (.perform (.external 0) (.var 0))
+
+/-- DI-62 positive: text survives the closed error image. -/
+def pFailText : P := .fail (.lit (.str "lost"))
+/-- DI-62 negatives for the two introduction forms not already covered by pYieldError. -/
+def pIllFailBool : P := .fail (.lit (.bool true))
+def pIllCauseBool : P := .failCause (.fail (.lit (.bool true)))
+
 def corpus : List (String × P) :=
   [ ("p42", p42), ("pBind", pBind), ("pFork", pFork), ("pTwo", pTwo), ("pAwait", pAwait)
   , ("pGen", pGen), ("pWhile", pWhile), ("pCatch", pCatch), ("pStr", pStr), ("pFailCause", pFailCause)
@@ -355,7 +420,9 @@ def corpus : List (String × P) :=
   , ("pChoose", pChoose), ("pPair", pPair), ("pStmts", pStmts), ("pActions", pActions), ("pOps", pOps)
   , ("pIll", pIll), ("pIllRet", pIllRet), ("pIllReq", pIllReq), ("pIllBreak", pIllBreak)
   , ("pIllBranch", pIllBranch), ("pIllJoin", pIllJoin), ("pIllVar", pIllVar)
-  , ("pIllCallback", pIllCallback), ("pIllStep", pIllStep), ("pIllInterruptor", pIllInterruptor) ]
+  , ("pIllCallback", pIllCallback), ("pIllStep", pIllStep), ("pIllInterruptor", pIllInterruptor)
+  , ("pProvide", pProvide), ("pSleep", pSleep), ("pDiamond", pDiamond), ("pMergeAll", pMergeAll), ("pExternal", pExternal), ("pIllExternalDomain", pIllExternalDomain)
+  , ("pFailText", pFailText), ("pIllFailBool", pIllFailBool), ("pIllCauseBool", pIllCauseBool) ]
 
 end Corpus
 

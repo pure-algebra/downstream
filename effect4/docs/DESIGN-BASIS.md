@@ -355,6 +355,42 @@ Generation must prove or test separate claims:
 
 No one gate discharges the others.
 
+Amended 2026-09-09 (S0; register rows DI-56, DI-57, DI-58). A target profile has **three
+parts, and they are three kinds of content**, not three data files:
+
+- **ProfileData** — serialisable policy and identity: the scalar domains and their refusal
+  rule, the admitted operations and their invocation forms, the adapter identities and
+  imports, and the error projection.
+- **HostSpec** — a Lean specification: the value correspondence `Rep`, the state relation,
+  the call protocol and the observation relation, as propositions and functions in checking
+  code. Functions in checking and semantic code are allowed; functions in canonical programs
+  are not (the exclusion list below), and no language for serialising every law is invented.
+- **Binding** — the runtime adapter and its evidence: the tapes, the differentials, the
+  finite host tests.
+
+Amended 2026-09-09 (Wave 2, DI-65): general host transitions may have alternative
+completions and resulting states. Determinism is an additional property after fixing the
+determining decisions; at-most-once consumption belongs to the checked session. State
+correspondence during execution can include open resources. The terminal cleanup observation
+requires completed-cleanup and ownership premises, not correspondence alone. The resource
+binding's second close completes with a defect; its closure diagnostic is a separate operation
+from live-resource use. A refused late acquisition reply does not itself release the host
+resource: the adapter/session retains cleanup ownership. The frozen amendment is
+`Test/contracts/foundation-wave2.contract.md`.
+
+rc.112 is the first profile. OCaml native is a **test bed**, not a claimed target. js_of_ocaml
+is **unclaimed** until its framing vectors, the arithmetic profile and the conformance suite
+all pass; framing vectors alone admit no execution route (DI-56, DI-19).
+
+A profile's scalar domain is **bounded with explicit refusal, intermediates included**:
+naturals, framing lengths and every arithmetic result stay inside it or the host refuses —
+no wrapping, no saturation — while the logical `Nat` stays unbounded and distinct from any
+target's finite representation. A refusal must have an execution outcome: the adapter raises
+a distinguished `ProfileRefusal`, the recorder records it as its own row class, and the
+comparator classifies that run "outside the profile" — neither agreement nor disagreement,
+with the retained state per the observation policy; the run is counted, not claimed. Until
+that lands, the truth claim names the exercised safe fragment (DI-56).
+
 ### DB-10 — PolyFun is pinned prior art, not a public dependency
 
 Status: adopted as prior art, not an Effect4 proof receipt.
@@ -378,6 +414,260 @@ PolyFun's `FreeM` is still a higher-order proof representation. It cannot
 replace first-order checked `Flow`, so adopting the dependency would not remove
 the reification boundary.
 
+### DB-11 — one value carrier, images over it, admission as a premise
+
+Status: adopted 2026-09-07 (U0, U1a, U1b: `7cbd436`, `54c90a4`); the executable admission
+is owed to X2.
+
+Every value the runtime carries is one tree, `Effect4.Store.Val`
+(`src/Effect4/Store/Val.lean`): the content store's frames plus `handle` (tag 12), a live
+allocation index into a running machine's stores. `Machine.Val` and `Env.Val` are that type
+by `abbrev` (`src/Effect4/Machine/Stores.lean`, `ContextMap.lean`); the runtime alphabets that
+were inductives of their own — exits, causes, the fiber context, the service map — are images
+over it (`Effect4.Store.Image`, `src/Effect4/Store/Image.lean`: `toVal`/`ofVal` with
+`ofVal_toVal` and `ofVal_exact`), so a value is read back by a reader (`Val.context?`,
+`Env.decode`, `Val.scope?`, `exitOfVal`) and never matched as a constructor. A handle is not
+content: no store shape accepts it, and its kind table is the Machine's.
+
+Well-formedness is a theorem premise, not a runtime check. `Val.WF` (frame sizes),
+`Stores.WF` (every handle a live allocation, a closed scope's exit valid in the store, a memo
+entry's Deferred and layer scope live) and `validIn` are the hypotheses the laws carry
+(`syncOpStep_answer_valid`, `interpOf_keyBounded`), and `Stores.empty` satisfies every
+family's conjunct so the store has a bottom. An executable admission — the checked decision
+at `Api` that refuses a value the premise excludes and returns the machine and the position
+— is X2's (`docs/research/2026-09-08-build-path.md` §3 (untracked working note)); until
+then a forged handle is a refusal row (`E4-HANDLE-CE-001`), never a defect the model raises.
+
+### DB-12 — one context, layers by path
+
+Status: adopted 2026-09-07 (the join: `6305ce3`, `4aae12f`, `4d7c34e` and its records
+commit).
+
+The fiber context is one structure (`Machine.Ctx`, `src/Effect4/Machine/Stores.lean`): the
+service map (`Env.Ctx`, `src/Effect4/Machine/ContextMap.lean`) and the two budget caches
+rc.112's `setContext` stores off it (`internal/effect.ts:726-727`). `Ctx.withServices` is
+the one constructor, so the cache law (`Ctx.CacheAgrees`) holds by construction and is not a
+field; the ambient `Scope` is a lookup on the map (`Ctx.ambientScope`), cached nowhere.
+There is no second context: `Effect.service`, `provideService`, `Effect.provide` and `scoped`
+read and write this one map through `updateContext`'s region (`src/Effect4/Program/Compile.lean`:
+`updateContextAt`, `updateThenK`).
+
+A layer is a program subterm. `LayerTerm` is a member of the `Eff` mutual family
+(`src/Effect4/Program/Eff.lean`: `succeed`, `effect`, `effectDiscard`, `provide`,
+`provideMerge`, `merge`, `fresh`, `orDie`, and since 2026-09-08 (the host rows slice) `ref`
+and `mergeAll` — the n-ary merge is its own constructor over a `LayerTerms` spine, one
+parallel parent scope and one sequential child per layer as `mergeAllEffect` builds it
+(`Layer.ts:1587-1602`), because a fold of `merge` builds a different scope tree for three or
+more layers; `merge` is its binary case, `:1905`), reached through `Eff.provideLayer` with
+rc.112's `local` flag as a field, and
+`Node.layer` addresses it. Its identity is its path: `LayerId := List Nat` is the memo world's
+key (`Stores.memo`, `MemoWorld`), and `compileLayer` builds a layer at its point with the memo
+map and the scope as `build`'s two arguments (`Layer.ts:230-232`) — the build protocol as
+`EffName` continuations at Points (`fromBuildThen`, `withMemoMapThen`, `memoize`,
+`provideThen`, `mergeChildren`, …) and `Region` as the first-order "what runs under a context
+region". There is no layer table, no `Construction`, no `ProgName`-style program table and no
+second `RunMachine` instantiation: the Layer machine
+(`git:4aae12f:src/Effect4/Machine/Layer.lean`) retired with the join, its memo world and
+operations joined into the one `Stores` verbatim.
+
+What path identity refuses, and what a reference adds (amended 2026-09-08, the host rows
+slice). rc.112 keys the memo map on the layer *object* (`Layer.ts:411`, `:438`); a path is
+where a layer *is*, never what it says, so two inline sites of one printed term are two keys:
+`harness/truth`'s `pProvideTwice` pins the two-site protocol (two builds) and keeps reading
+`2`. One object at two sites — `const L = Layer.effect(…)` then `Layer.merge(L, L)` — is
+`LayerTerm.ref`, the path of the defining occurrence, and the compile redirects a reference
+to its target's path (`resolveLayer`), so both sites share one memo entry and a memo hit is
+reachable from a printed program for the first time: `pDiamond` reads `1` beside
+`pProvideTwice`'s `2`, and the pair is the receipt that path identity now tracks object
+identity. A well-formed reference names a non-reference layer that precedes it in program
+order and does not enclose it (`Program/Refs.lean` `layerRefsWF`); the printer hoists every
+target into a `const L_<path>` (`printModule`) so the host sees one object. Grill call 10
+(keep the memo store) stays settled by build order-independence
+(`docs/research/2026-09-08-build-path.md` §2 (untracked working note)). Inserting under one
+path leaves every other path's entry untouched (`MemoWorld.find?_append_other_key`,
+`LAYER-FB-LAYER-IDENTITY`); a forged path is the refusal row.
+
+### DB-13 — one wake protocol, the family's policy on top
+
+Status: adopted 2026-09-08 (the scheduler surface: `5347294`, `4ed61a7` and the records commit).
+
+Every waiting family — Deferred now; Latch, Queue, Semaphore, Pool, PubSub and the timer as
+they land — parks its waiters on one list, `WakeList π` (`src/Effect4/Machine/Wake.lean`),
+generic in the family's payload `π`. The protocol fixes *when* a waiter is woken and how a
+cancel is accounted; *which* waiters and *with what* is the family's policy (`WakePolicy`:
+`broadcast`, `signal`, `sweep`), a function over the list, never a second list. A waiter is
+`(fiber, token, phase, payload)`, captured at registration (the WHATWG capture rule: a later
+list replacement cannot retarget it); the phase is the list's counter, advanced by every wake
+(Eio's `In_transition` role). A wake owes resumes, `Owed κ` = `(waiter, token, code, mode)`,
+and `WakeMode` says how an owed resume is delivered: `now` inline at the drain (Deferred,
+`internal/effect.ts:5277`), or `scheduled owner priority` posted on the owner's dispatcher and
+fired by the host's flush (the six `scheduleTask` sites, `Scheduler.ts:193-247`). A
+`scheduled` wake coalesces: the first `schedule` captures the pending waiters into the batch
+and posts one `Task.wake list phase`; a later one joins the batch and posts nothing
+(`WakeList.schedule_coalesces`, `Latch.scheduleUnsafe`).
+
+The cancelled-waiter clause is verbatim: a cancel on a waiter still pending removes it and
+owes nothing; a cancel on a waiter no longer pending consumed a wake, and the cancelling step
+owes one (`WakeList.cancel_owed_iff`; a `broadcast` list lost nothing,
+`wakeAll_cancel_owed`). The machine side stays the token guard: a resume for a waiter no
+longer parked is inert.
+
+The dispatcher's address is its making fiber's id, and nothing else: the machine never
+removes a fiber record (`spawn` appends, `RunMachine.update` maps in place), so a dispatcher
+outlives its fiber's run exactly as rc.112's object does (`Queue.ts:455` stores it at make),
+and a post to an exited fiber's dispatcher is delivered. There is no dispatcher table. A post
+to an id the machine never minted is the frontier `Stuck.unknownFiber`
+(`SCHED-FB-UNKNOWN-OWNER`).
+
+The `Delay` reply (Riot's `Proc_state.step` third answer) is not a new machine answer: a row
+that is not ready registers on the family's list with *the row itself* as the payload
+(`WakeList.delay`) and parks on a fresh token; the wake re-presents the row and it is polled
+again, consuming no frame (Queue's signal-then-repoll, `Queue.ts:1955-1975`, `:1432`). A
+spurious wake is permitted by construction: the repoll may park again at the advanced phase.
+
+What this basis refuses. A waiter list is FIFO in registration order and a family's non-FIFO
+policy is a sweep over it, not a reordering (`sweep_keeps_order`, `SCHED-FB-NO-FIFO`);
+`Task.wake` and `WakeList.delay` have no rc.112 producer in this tree until Latch and Queue
+land, so their meaning is pinned by executed fixtures (`SchedulerCoreContract` §Wake), not by
+the truth harness (`SCHED-FB-PRODUCER`); `TxRef` is its own subcalculus, not a policy on
+this list.
+
+### DB-14 — one logical clock, a duration decision, staged fires
+
+Status: adopted 2026-09-08 (the timer, A4: the three commits of
+`docs/research/2026-09-08-timer-dispatch.md` (untracked working note)).
+
+Physical time is not modelled and never will be (DB-04 forbids fuel as time; wall-clock, drift,
+the browser's floor and `setTimeout`'s ceiling are host facts). Logical time is one store on
+the wake protocol (`src/Effect4/Machine/Timer.lean`, DB-13): `TimerStore` is the clock, the
+pending sleeps as waiters whose payload is the deadline, and the end of an advance in
+progress. Its shape is rc.112's `TestClock` (`testing/TestClock.ts`: a timestamp that moves
+only when the host says so, a table ordered by deadline then registration, an `adjust` that
+fires every due sleep in that order staging the clock at each fired deadline and letting
+fibers run between fires); its registration meaning is the live `ClockImpl`'s
+(`internal/effect.ts:6052-6066`): a cancelled sleep is removed.
+
+The host moves the clock by one decision, `RunDecision.advance (millis : Nat)` — a duration,
+never a timestamp — and the machine runs the staged loop (`advanceState`): fire the least due
+sleep (`RunInterp.clockStep`, the one new interpreter field), resume it, flush the
+dispatchers, repeat, then set the clock to the end. A sleep a woken fiber registers that is
+due by the end fires in the same advance (finding 4 of
+`docs/research/2026-09-04-timer-semantics-and-proofs.md` (untracked working note)). A fired sleep resumes inline
+(`WakeMode.now`, as a Deferred's completion does); the latch-posted spelling rc.112 uses there
+is Latch's to land. Two rows reach the store: `sleep d` with `0 < d < ∞` registers
+(`Name.registerSleep`, cancel `Name.cancelSleep` = `clearTimeout`), and `clockNow` reads
+(`SyncOp.clockNow`); `sleep 0` is `yieldNow` and `sleep ∞` is `never`, decided at the row.
+`TimerStore.WF` — every pending deadline at or after the clock — is a conjunct of
+`Stores.WF`, kept by every store step and every clock step.
+
+What this basis refuses. `setTime` (`TIMER-FB-SET-TIME`): the clock never moves backwards. A
+kept cancelled sleep (`TIMER-FB-KEPT-CANCEL`): the store models `clearTimeout`, not the test
+clock's table. An infinite deadline (`TIMER-FB-INFINITE`). A `Psq` carrier: the wake list is
+the one carrier and the earliest deadline is a policy on it (`WakeList.wakeBy`), measured
+elsewhere as not worth a second structure; a keyed carrier is a later, measured change.
+
+### DB-15 — strings are machine values; host records and errors cross as strings
+
+Status: adopted 2026-09-08 (the host rows slice, decision 3 of
+`docs/research/2026-09-08-host-rows-slice.md` §7 (untracked working note); step 1 of its
+dispatch).
+
+A `str` literal is a machine value on the native route: `Lit.toVal (.str s) = some (.str s)`
+(`src/Effect4/Program/Native.lean`), and the value typing inhabits `.string` with the
+carrier's `str` frame and `.option t` with its `none` and `some` frames (`Val.hasTy`,
+`src/Effect4/Laws/Program/Typed.lean`). Every literal now evaluates, so `evalTerm_isSome`
+carries no `noStr` premise and the register row `E4-TYPED-CE-001` is retired with its ID
+kept. The provision route's `litVal` (`src/Effect4/Program/Typing.lean`) still refuses a
+string as a layer value (`PROV-FB-STRING-VALUE`); that refusal is its own and is not moved
+here.
+
+What crosses a host row, so that a canonical row table can be typed with neither a record
+nor a dynamic type in `Ty` (`src/Effect4/Program/Eff.lean` has neither and gains no `json`
+leaf): a SQL row is `list (prod string string)`, one `(column, cell)` pair per column in the
+order the package answered them; a row set is `list (list (prod string string))`; bind
+parameters are `list string`; and every cell and parameter is JSON text (`7` is `"7"`, `"a"`
+is `"\"a\""`, `null` is `"null"`). A bind outside `Lit` (a `Date`, a `Uint8Array`, an object)
+is `E-ARG-DYNAMIC` at ingest. An error crosses as `prod string string`, the `_tag` and the
+message: `SqlError` is a tagged union of eleven reasons (`unstable/sql/SqlError.ts:31-329`)
+and `Ty` has no sum. The machine's error alphabet carries it as `Err.tagged tag message`
+(`src/Effect4/Machine/Stores.lean`, appended 2026-09-09 so every earlier golden keeps its
+bytes), whose value image is `ctor 2 [str tag, str message]`; `errOf` reads a two-string pair
+into it, `errAdmits` admits it exactly where the row's error type admits the pair, and the
+truth wire spells it as the two-element array the host's `pair` builds. `orDie` on a tagged
+error dies as `badName`, since the defect alphabet has no string payload
+(`ORDIE-FB-TAGGED`). For a two-level error — a tagged record whose one field `reason` is
+itself tagged, rc.112's `SqlError`, the shape its `Effect.catchReason` dispatches on — the pair
+is the reason's tag and the driver's message under it, the outer `_tag` implied by the row
+(ruling G1, 2026-09-09): `SqlError.message` is the constant `"Failed to execute statement"`
+for a missing table, a syntax error, a constraint violation and a closed database alike, so
+the literal `(_tag, message)` distinguished none of them (the error-paths receipt). A row
+whose package effect is typed `never` — the sqlite client's `make` — has an empty error
+channel: a file that cannot be opened is a defect rc.112 throws, which no tape can replay. A
+handle a row answers stays a `Ty.handle` target spelling (DB-11); an
+optional answer (`KeyValueStore.get`) is `.option string`, and the host adapts the package's
+`string | undefined` with `Option.fromNullable`. Amended 2026-09-09 (host rows step 5): a
+term spells a parameter list with the variadic atom `strings(s₁, …, sₙ) : list string`
+(`nativeAtom`, `Native.lean`), the one list a term can build; and because the wire is JSON
+text, the *host* decodes each parameter with `JSON.parse` before binding it, so `"7"` binds a
+number and `"\"x\""` a string, exactly as the foreign `${7}` and `${"x"}` did. The canonical
+tables are `Program/Packages/SqliteBun.lean` and `KeyValueStoreMemory.lean`; what in them is
+the package's and what is the harness's plumbing is said in their module headers.
+
+Amended 2026-09-09 (S0; the foundation settlement, register rows DI-59, DI-35, DI-62), three
+sentences.
+
+*Where the pair is made* (DI-59): at the **row adapter** — `Effect.mapError(toPair)` in every
+shim of `harness/truth/prelude.ts` — so the program's own handlers and the recorder observe the
+same value. Corrected 2026-09-09 (Wave 2): the recorder retains a **bounded, versioned diagnostic
+projection** beside the row, with its fields, ordering and losses explicit. It does not promise
+lossless serialization of arbitrary raw host objects or causes. Unsupported mixed-cause
+recording must be represented or explicitly refused, not silently reduced to the first failure.
+The current historical tapes contain the projected pair/outer tag until their explicit migration.
+The type oracle (DI-29) binds the adapter rather than the package member.
+
+*The equality refusal set* (DI-35, ruling G9): `eq` widens **one `Ty` at a time, and only where
+`===` compares faithfully** — `.string` today, with `or`/`and` at `.bool` beside it, since the
+term language has `not` and no other connective. Past that the printed `eq` becomes
+`Equal.equals`, which is its own slice; `Val.eqAt : Ty → Val → Val → Bool` is the destination
+beside `Val.hasTy`; the `Effects` package gets no `Equal` class.
+
+*The admissible error image* (DI-62): a program may introduce a failure payload only at `never`,
+`nat`, `string`, `prod string string`, or a union of those (a literal type once `Ty.lit` lands),
+and the restriction applies at **every** introduction — `fail`, `yieldError`, and each `fail`
+leaf of a cause literal — while defect-only and interrupt-only causes stay admitted at `never`.
+`Err.text s` is appended so a plain string round-trips instead of collapsing to `boom`; `errOf`
+is total onto `tag`/`text`/`tagged` with `boom` retained for old tapes; and a declared error type
+never permits discarded data (`errAdmits_errOf`). `Err.value (v : Val)` is **refused**: a handle
+inside a cause would extend the minted-handle invariant into causes.
+
+Ruled 2026-09-09 (Wave 2, DI-15/55/38): append string-literal `Ty.lit` and its subtype
+relation after deep normalization, then change answer merging in a separate proved slice.
+Keep literal tags through const-generic pair construction. A richer `prod (lit tag) X` error
+still requires a supported image for X and its recovery laws; literals alone do not create
+that image. No record constructor or arbitrary error-value carrier is added by this ruling.
+
+What this basis refuses. A `json` leaf in `Ty`: the value language is the carrier's frames
+and a codec is a row. A record type in `Ty`: columns are pairs. `.int` stays uninhabited
+(`TYPED-FB-INT`): `Val.nat` is a `.nat`, and the printer's identification of the two as
+`number` is not the typing's.
+
+Recommended beside these refusals, not ruled (scout E, 2026-09-09). All three stand, with two
+amendments: `Headers` and `File.Info` are codec-able as `list (prod string string)`, the shape
+the SQL row already uses; and `.int` is the one refusal a package member's *declared* type
+contradicts (`SocketCloseError.code: Schema.Int`), and the cheapest to lift, since the ordinal
+and its `render` arm already exist. G1's implied outer tag is sound **exactly when a row's
+package effect has a single outer tag**: `SqlClient.withTransaction` (whose channel is the
+body's `E` union `SqlError`) and `SqliteMigrator.layer` (two outer tags, from the installed
+driver) violate it, and four error class names are declared twice across packages
+(`AuthenticationError`, `UnknownError`, `InternalError`, `PersistenceError`), so a row whose
+`E` is a union must declare the outer tag too. Two sentences above are corrected by the same
+reading: `SqlError`'s eleven reasons are **not uniform** — `UniqueViolation` carries a twelfth
+field `constraint` the other ten do not, and "they differ only by tag" is what makes
+`prod string string` look sufficient; and the JSON-text refusal covers the **bind** direction
+only — the package's own parameter and cell domain is `Statement.PrimitiveKind`'s eight members,
+`JSON.stringify` throws on a `bigint` and is lossy on a `Date` and a `Uint8Array`, and the
+**answer** direction is unrefused (DI-56).
+
 ## Native library boundaries
 
 Effect4 does not place the whole Effect TypeScript API into one opcode family.
@@ -389,7 +679,8 @@ The following calculi have distinct indices and explicit embeddings:
   schema remains a checked downstream profile, not a duplicate generic
   carrier.
 - Context and Service own stable typed keys, requirements, and environments.
-  Layer owns construction, dependency order, memo identity, and cleanup.
+  Layer owns construction, dependency order, memo identity, and cleanup —
+  as program subterms addressed by path, on one context (DB-12).
 - Scope and Resource own lifetime delimiters and exit-aware finalization.
   Their operations may be summed into a program without erasing the separate
   calculus.
@@ -463,9 +754,16 @@ The following choices require a new decision record and a breaker packet:
 - storing raw `Expr`, host closures, promises, or runtime objects as canonical
   program content;
 - making PolyFun, Mathlib, Foldlab, Effect TypeScript, or the Effect language
-  service the semantic owner of the core library; and
+  service the semantic owner of the core library;
 - claiming full reification from compilation, a finite corpus sweep, or a
-  finite runtime test alone.
+  finite runtime test alone;
+- requirement polymorphism in a **stored program** (DI-20, refused 2026-09-09 as a
+  profile choice): this profile has no runtime polymorphic syntax and adds none.
+  Lean and OCaml builders are polymorphic and instantiate closed `Eff` programs;
+  subeffecting (`Row.Subset` as subsumption) is the shape on offer. This is a
+  bounded refusal, not a claim that polymorphism is impossible here; and
+- effect polymorphism in a stored program (DI-28), refused on the same ground and
+  with the same bound.
 
 These exclusions keep the proof graph inspectable while leaving room for
 explicit comparison models and target-specific implementations.

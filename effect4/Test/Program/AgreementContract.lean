@@ -1,4 +1,4 @@
-import Effect4.Program.Agreement.Machine
+import Effect4.Laws.Program.Agreement.Machine
 import Test.Program.CompileContract
 
 /-!
@@ -6,7 +6,7 @@ import Test.Program.CompileContract
 
 Packet: `Test/contracts/program-denotation.contract.md`; plan
 `docs/research/2026-09-05-slice-1-compile-ground.md` §9. `run_eq_meaning`
-(`src/Effect4/Program/Agreement/Machine.lean`) says: a straight-line program, with fuel for
+(`src/Effect4/Laws/Program/Agreement/Machine.lean`) says: a straight-line program, with fuel for
 its depth and its commands, runs to its meaning's exit and stores, under the op budget or
 past it. These guards pin, one program at a time, what the theorem consumes — `Plain`,
 `depth`, `steps`, the local run of `Agreement.lean` — and the two roads of the run: the
@@ -83,8 +83,8 @@ def pOnExitFails : NativeEff := .onExit (.succeed (.lit (.nat 1))) (.fail (.lit 
 #guard steps pCatch = 2
 #guard steps pRefSet = 7
 #guard steps pBranchTrue = 1
-#guard steps pOnExit = 11
-#guard steps pNestedFinalizer = 8
+#guard steps pOnExit = 12
+#guard steps pNestedFinalizer = 10
 #guard depth pNestedFinalizer = 3
 
 -- The contract's fuel covers every plain program's depth and commands, and the budget its

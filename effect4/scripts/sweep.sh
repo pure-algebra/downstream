@@ -64,17 +64,21 @@ done
 # execute the Effect runtime; OCaml gates need the named opam switch.
 gate_table() {
   cat <<'GATES'
-hermetic|armmap-citations|scripts/check-armmap-citations.sh
+hermetic|generated-stale|scripts/check-generated.sh --stale
+hermetic|library-roots|scripts/check-library-roots.sh
 hermetic|source-citations|scripts/check-source-citations.sh
 hermetic|internal-citations|scripts/check-internal-citations.sh
 hermetic|effect-runtime-census|scripts/check-effect-runtime-census.sh
 hermetic|ts-eff|scripts/check-ts-eff.sh
-hermetic|rc112-surface|scripts/check-rc112-surface.sh
+hermetic|conform|scripts/check-conform.sh models native types
+hermetic|generated|scripts/check-generated.sh
+host|schema-typescript|scripts/check-schema-typescript-generation.sh
 host|ts-eff-corpus|scripts/check-ts-eff-corpus.sh
+host|ingest|scripts/check-ingest.sh
 host|truth|scripts/check-truth.sh
-ocaml|avatar-witnesses|scripts/check-ocaml.sh avatar-witnesses
-ocaml|daemon-protocol|scripts/check-ocaml.sh daemon-protocol
+ocaml|gen-check|scripts/check-ocaml.sh gen-check
 ocaml|dune-tests|scripts/check-ocaml.sh dune-tests
+ocaml|engine-tests|scripts/check-ocaml.sh engine-tests
 GATES
 }
 
@@ -109,7 +113,13 @@ while IFS='|' read -r lane name command; do
   start="$(date +%s)"
   read -r -a gate_command <<< "$command"
   if ( cd "$repo_root" && bash "${gate_command[@]}" ) </dev/null >"$log" 2>&1; then status=PASS; else status=FAIL; fi
-  if [ "$status" = PASS ] && grep -q "^SKIP " "$log"; then status=SKIP; fi
+  # A gate-level declared verdict outranks a subtest's SKIP diagnostic.
+  # Keep absent runtimes as SKIP and nonzero gate exits as FAIL.
+  if [ "$status" = PASS ] && grep -q "^PASS $name:.*red as declared" "$log"; then
+    status=DECLARED
+  elif [ "$status" = PASS ] && grep -q "^SKIP " "$log"; then
+    status=SKIP
+  fi
   seconds="$(( $(date +%s) - start ))"
   # A gate that hit its stamp says so in the line `stamp_report` prints.
   if grep -Fq 'skipped (EFFECT4_FORCE=1 re-runs)' "$log"; then
@@ -142,6 +152,8 @@ if [ "$failed" -gt 0 ]; then
 fi
 if grep -q $'\tSKIP\t' "$summary"; then
   echo "PASS executed gates; skipped gates are listed in the summary"
+elif grep -q $'\tDECLARED\t' "$summary"; then
+  echo "PASS $scope under the declared-red policy; declared failures are listed above"
 else
   echo "PASS $scope is green"
 fi

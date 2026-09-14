@@ -1,18 +1,19 @@
-import Effect4.Program.Typing
+import Effect4.Program.NativeAtom
+import Effect4.Program.ErrorImage
 import Effect4.Machine.Stores
 
 /-!
 # Syntax.Native — the native row alphabet over the stores (lane A3, first cut)
 
 Plan: `docs/research/2026-09-04-eff-compile.md` §1-§2. The native route performs the
-standard library's store operations (`src/Effect4/StdLib/Links.lean`: `Ref.*`, `Deferred.*`,
+standard library's store operations (`git:62c04d9:src/Effect4/StdLib/Links.lean`: `Ref.*`, `Deferred.*`,
 `Scope.make`) against the reference machine's stores (`src/Effect4/Machine/Stores.lean`). This
 module owns:
 
 * `NativeOp`, the positions of that table, each with its `Row` (spelling, shape, kind, the
   request and answer types, the rc.112 line);
-* the value side: terms evaluate to the stores' `Val`, tuples through the reified-exit list
-  cells (the one list-shaped `Val`), the pure atoms as a closed table;
+* the value side: terms evaluate to the stores' `Val`, tuples as the carrier's `list` (the
+  one list-shaped `Val`, the frame an exit list is too), the pure atoms as a closed table;
 * `SyncOp.ofRow`, the decoding of a row and a request value into the store operation the
   machine runs.
 
@@ -28,60 +29,46 @@ open Effect4 Effect4.Machine
 
 /-! ## Values -/
 
-/-- A tuple of values, spelled with the reified-exit list cells: a `List Val` field would make
-`Val` a nested inductive (`src/Effect4/Machine/Stores.lean`, state note §3.5), and `exitNil`/`exitCons`
-are the list cells the alphabet already has. -/
-def Val.tuple : List Val → Val
-  | [] => Val.exitNil
-  | v :: rest => Val.exitCons v (Val.tuple rest)
+/-- A tuple of values: the carrier's `list` frame, the one list-shaped value
+(`src/Effect4/Machine/Stores.lean`; an awaited exit list, `exitsVal`, is the same frame). -/
+abbrev Val.tuple (values : List Val) : Val := .list values
 
 def Val.tuple? : Val → Option (List Val)
-  | Val.exitNil => some []
-  | Val.exitCons head tail => (Val.tuple? tail).map (head :: ·)
+  | .list values => some values
   | _ => none
 
-theorem Val.tuple?_tuple (vs : List Val) : Val.tuple? (Val.tuple vs) = some vs := by
-  induction vs with
-  | nil => rfl
-  | cons v rest ih => simp [Val.tuple, Val.tuple?, ih]
+theorem Val.tuple?_tuple (vs : List Val) : Val.tuple? (Val.tuple vs) = some vs := rfl
 
-/-- A literal as a machine value. Strings are not machine values on the native route (the
-alphabet has none); a `str` literal is refused here and admitted only by the typing of the
-service route's spellings. -/
+theorem Val.tuple?_exact {v : Val} {vs : List Val} (h : Val.tuple? v = some vs) : v = Val.tuple vs := by
+  unfold Val.tuple? at h
+  split at h
+  · injection h with h
+    rw [h]
+  · exact nomatch h
+
+/-- A literal as a machine value: `unit`, `nat` and `bool` against the carrier's frames, and
+`str` against its `string` frame. Strings are machine values on the native route since the
+host rows slice (2026-09-08, DB-15): a canonical row's request and answer carry them, so a
+`str` literal evaluates like every other literal (`Lit.toVal_isSome`,
+`src/Effect4/Laws/Program/Typed.lean`). -/
 def Lit.toVal : Lit → Option Val
   | .unit => some Val.unit
   | .nat n => some (Val.nat n)
   | .bool b => some (Val.bool b)
-  | .str _ => none
+  | .str s => some (Val.str s)
 
-/-- The pure atoms of the native route: a closed table, interpreted here, typed by
-`nativeAtomTy`. -/
-def nativeAtom : String → List Val → Option Val
-  | "succ", [Val.nat n] => some (Val.nat (n + 1))
-  | "pred", [Val.nat n] => some (Val.nat (n - 1))
-  | "isZero", [Val.nat n] => some (Val.bool (n = 0))
-  | "not", [Val.bool b] => some (Val.bool (!b))
-  | "add", [Val.nat a, Val.nat b] => some (Val.nat (a + b))
-  | "lt", [Val.nat a, Val.nat b] => some (Val.bool (decide (a < b)))
-  | "eq", [Val.nat a, Val.nat b] => some (Val.bool (a = b))
-  | "pair", [a, b] => some (Val.tuple [a, b])
-  | "fst", [Val.exitCons a _] => some a
-  | "snd", [Val.exitCons _ (Val.exitCons b _)] => some b
-  | _, _ => none
+/-- String-named compatibility surface over the complete native atom inventory. -/
+def nativeAtom (name : String) (values : List Val) : Option Val :=
+  (NativeAtom.ofName? name).bind (fun atom => atom.eval values)
 
-/-- The atoms' types, by their argument types. -/
-def nativeAtomTy : String → List Ty → Option Ty
-  | "succ", [.nat] => some .nat
-  | "pred", [.nat] => some .nat
-  | "isZero", [.nat] => some .bool
-  | "not", [.bool] => some .bool
-  | "add", [.nat, .nat] => some .nat
-  | "lt", [.nat, .nat] => some .bool
-  | "eq", [.nat, .nat] => some .bool
-  | "pair", [a, b] => some (.prod a b)
-  | "fst", [.prod a _] => some a
-  | "snd", [.prod _ b] => some b
-  | _, _ => none
+theorem nativeAtom_strings (vs : List Val) : nativeAtom "strings" vs = stringsAtom vs := rfl
+
+/-- The atoms' types, by their argument types, from the same exhaustive owner. -/
+def nativeAtomTy (name : String) (types : List Ty) : Option Ty :=
+  (NativeAtom.ofName? name).bind (fun atom => atom.typeOf types)
+
+theorem nativeAtomTy_strings (tys : List Ty) :
+    nativeAtomTy "strings" tys = if tys.all (· == .string) then some (.list .string) else none := rfl
 
 mutual
   /-- A term's value in a positional environment. -/
@@ -124,14 +111,42 @@ inductive NativeOp
   | deferredFail
   | deferredAwait
   | scopeMake (strategy : FinalizerStrategy)
+  /-- `Effect.sleep(duration)` (`internal/effect.ts:6114-6116`; `ClockImpl.sleepMillis`
+  `:6052-6066`): the timer, A4. The request is the millis: `0` is `yieldNow`, the rest parks on
+  the logical clock (`Machine/Timer.lean`, DB-14). -/
+  | sleep
+  /-- `Effect.currentTimeMillis` (`internal/effect.ts:6118`): the logical clock, read
+  (`SyncOp.clockNow`). -/
+  | clockNow
+  /-- A position in the row table supplied beside the program. -/
+  | external (index : Nat)
 deriving DecidableEq
+
+/-- Rows are unit content beside the program's bytes. -/
+abbrev RowTable := List Row
 
 namespace NativeOp
 
 /-- The handle types this cut spells: cells hold numbers, deferreds carry numbers and fail
-with numbers (the error alphabet's `Err.tag`). -/
-def refTy : Ty := .handle "Ref.Ref<number>"
-def deferredTy : Ty := .handle "Deferred.Deferred<number, number>"
+with numbers (the error alphabet's `Err.tag`). Each spelling is written once, here; the
+typing arms (`Program/Typed.lean`) and the service table below read these names. -/
+def refTarget : String := "Ref.Ref<number>"
+def refTy : Ty := .handle refTarget
+/-- The type arguments of the `Deferred` handle this cut spells, in order. They are what
+`Deferred.make` must be *called* with: the export's own parameters have defaults
+(`Deferred<unknown, never>`), so without them the host types the cell at those defaults and
+rejects every later use at this row's declared types (`E4-CHECK-CE-013`,
+`Deferred.ts:171`). -/
+def deferredTypeArgs : List String := ["number", "number"]
+def deferredTarget : String := "Deferred.Deferred<number, number>"
+def deferredTy : Ty := .handle deferredTarget
+/-- The two external service handles of the host rows slice (service type codes 8 and 9,
+`nativeServiceTy`; the package tables of `Program/Packages`): a SQL client and a key-value
+store. Written once, here. -/
+def sqlTarget : String := "SqlClient.SqlClient"
+def sqlTy : Ty := .handle sqlTarget
+def kvTarget : String := "KeyValueStore.KeyValueStore"
+def kvTy : Ty := .handle kvTarget
 
 /-- The printed name of a pure function, `Ref.update(ref, incr)`. -/
 def fnSpelling : FnName → String
@@ -141,99 +156,117 @@ def fnSpelling : FnName → String
   | .noChange => "noChange"
   | .takeAndBump => "takeAndBump"
 
+/-- An absent external position cannot type as a callback. Its empty spelling is
+outside the admitted table domain. -/
+def externalPlaceholder : Row :=
+  { name := "external", spelling := "", shape := .value, kind := .program,
+    request := .never, answer := .never, cite := "", registration := .external }
+
 /-- The row of each operation. -/
 def row : NativeOp → Row
-  | refMake => ⟨"refMake", "Ref.make", .call, [], .sync, .nat, refTy, .never, [], "Ref.ts:173"⟩
-  | refGet => ⟨"refGet", "Ref.get", .call, [], .sync, refTy, .nat, .never, [], "Ref.ts:200"⟩
+  | refMake => ⟨"refMake", "Ref.make", .call, [], .sync, .nat, refTy, .never, [], "vendor/effect-4.0.0-rc.112/src/Ref.ts:173", [], .deferred⟩
+  | refGet => ⟨"refGet", "Ref.get", .call, [], .sync, refTy, .nat, .never, [], "vendor/effect-4.0.0-rc.112/src/Ref.ts:200", [], .deferred⟩
   | refSet =>
-    ⟨"refSet", "Ref.set", .call, [], .sync, .prod refTy .nat, refTy, .never, [], "Ref.ts:306-307"⟩
+    ⟨"refSet", "Ref.set", .tupleCall, [], .sync, .prod refTy .nat, refTy, .never, [], "vendor/effect-4.0.0-rc.112/src/Ref.ts:306-307", [], .deferred⟩
   | refGetAndSet =>
-    ⟨"refGetAndSet", "Ref.getAndSet", .call, [], .sync, .prod refTy .nat, .nat, .never, [],
-      "Ref.ts:399-404"⟩
+    ⟨"refGetAndSet", "Ref.getAndSet", .tupleCall, [], .sync, .prod refTy .nat, .nat, .never, [],
+      "vendor/effect-4.0.0-rc.112/src/Ref.ts:399-404", [], .deferred⟩
   | refSetAndGet =>
-    ⟨"refSetAndGet", "Ref.setAndGet", .call, [], .sync, .prod refTy .nat, .nat, .never, [],
-      "Ref.ts:747"⟩
+    ⟨"refSetAndGet", "Ref.setAndGet", .tupleCall, [], .sync, .prod refTy .nat, .nat, .never, [],
+      "vendor/effect-4.0.0-rc.112/src/Ref.ts:747", [], .deferred⟩
   | refUpdate f =>
     ⟨"refUpdate", "Ref.update", .call, [fnSpelling f], .sync, refTy, .unit, .never, [],
-      "Ref.ts:1273-1276"⟩
+      "vendor/effect-4.0.0-rc.112/src/Ref.ts:1273-1276", [], .deferred⟩
   | refGetAndUpdate f =>
     ⟨"refGetAndUpdate", "Ref.getAndUpdate", .call, [fnSpelling f], .sync, refTy, .nat, .never, [],
-      "Ref.ts:496-501"⟩
+      "vendor/effect-4.0.0-rc.112/src/Ref.ts:496-501", [], .deferred⟩
   | refUpdateAndGet f =>
     ⟨"refUpdateAndGet", "Ref.updateAndGet", .call, [fnSpelling f], .sync, refTy, .nat, .never, [],
-      "Ref.ts:1368"⟩
+      "vendor/effect-4.0.0-rc.112/src/Ref.ts:1368", [], .deferred⟩
   | refUpdateSome f =>
     ⟨"refUpdateSome", "Ref.updateSome", .call, [fnSpelling f], .sync, refTy, .unit, .never, [],
-      "Ref.ts:1502-1508"⟩
+      "vendor/effect-4.0.0-rc.112/src/Ref.ts:1502-1508", [], .deferred⟩
   | refGetAndUpdateSome f =>
     ⟨"refGetAndUpdateSome", "Ref.getAndUpdateSome", .call, [fnSpelling f], .sync, refTy, .nat,
-      .never, [], "Ref.ts:635-643"⟩
+      .never, [], "vendor/effect-4.0.0-rc.112/src/Ref.ts:635-643", [], .deferred⟩
   | refUpdateSomeAndGet f =>
     ⟨"refUpdateSomeAndGet", "Ref.updateSomeAndGet", .call, [fnSpelling f], .sync, refTy, .nat,
-      .never, [], "Ref.ts:1639-1646"⟩
+      .never, [], "vendor/effect-4.0.0-rc.112/src/Ref.ts:1639-1646", [], .deferred⟩
   | refModify f =>
     ⟨"refModify", "Ref.modify", .call, [fnSpelling f], .sync, refTy, .nat, .never, [],
-      "Ref.ts:896-901"⟩
+      "vendor/effect-4.0.0-rc.112/src/Ref.ts:896-901", [], .deferred⟩
   | refModifySome f =>
     ⟨"refModifySome", "Ref.modifySome", .call, [fnSpelling f], .sync, refTy, .nat, .never, [],
-      "Ref.ts:1159-1163"⟩
+      "vendor/effect-4.0.0-rc.112/src/Ref.ts:1159-1163", [], .deferred⟩
   | deferredMake =>
     ⟨"deferredMake", "Deferred.make", .call, [], .sync, .unit, deferredTy, .never, [],
-      "Deferred.ts:171"⟩
+      "vendor/effect-4.0.0-rc.112/src/Deferred.ts:171", deferredTypeArgs, .deferred⟩
   | deferredIsDone =>
     ⟨"deferredIsDone", "Deferred.isDone", .call, [], .sync, deferredTy, .bool, .never, [],
-      "Deferred.ts:1382"⟩
+      "vendor/effect-4.0.0-rc.112/src/Deferred.ts:1382", [], .deferred⟩
   | deferredPoll =>
     ⟨"deferredPoll", "Deferred.poll", .call, [], .sync, deferredTy, .bool, .never, [],
-      "Deferred.ts:1414-1416"⟩
+      "vendor/effect-4.0.0-rc.112/src/Deferred.ts:1414-1416", [], .deferred⟩
   | deferredSucceed =>
-    ⟨"deferredSucceed", "Deferred.succeed", .call, [], .sync, .prod deferredTy .nat, .bool, .never,
-      [], "Deferred.ts:1514"⟩
+    ⟨"deferredSucceed", "Deferred.succeed", .tupleCall, [], .sync, .prod deferredTy .nat, .bool, .never,
+      [], "vendor/effect-4.0.0-rc.112/src/Deferred.ts:1514", [], .deferred⟩
   | deferredFail =>
-    ⟨"deferredFail", "Deferred.fail", .call, [], .sync, .prod deferredTy .nat, .bool, .never, [],
-      "Deferred.ts:669"⟩
+    ⟨"deferredFail", "Deferred.fail", .tupleCall, [], .sync, .prod deferredTy .nat, .bool, .never, [],
+      "vendor/effect-4.0.0-rc.112/src/Deferred.ts:669", [], .deferred⟩
   | deferredAwait =>
     ⟨"deferredAwait", "Deferred.await", .call, [], .async, deferredTy, .nat, .nat, [],
-      "Deferred.ts:173-186"⟩
+      "vendor/effect-4.0.0-rc.112/src/Deferred.ts:173-186", [], .deferred⟩
   | scopeMake .sequential =>
     ⟨"scopeMake", "Scope.make", .call, [], .sync, .unit, Ty.scope, .never, [],
-      "internal/effect.ts:3914-3922"⟩
+      "vendor/effect-4.0.0-rc.112/src/internal/effect.ts:3914-3922", [], .deferred⟩
   | scopeMake .parallel =>
     ⟨"scopeMake", "Scope.make", .call, ["\"parallel\""], .sync, .unit, Ty.scope, .never, [],
-      "internal/effect.ts:3914-3922"⟩
+      "vendor/effect-4.0.0-rc.112/src/internal/effect.ts:3914-3922", [], .deferred⟩
+  | sleep =>
+    ⟨"sleep", "Effect.sleep", .call, [], .async, .nat, .unit, .never, [],
+      "vendor/effect-4.0.0-rc.112/src/internal/effect.ts:6114-6116", [], .deferred⟩
+  | clockNow =>
+    ⟨"clockNow", "Effect.currentTimeMillis", .value, [], .sync, .unit, .nat, .never, [],
+      "vendor/effect-4.0.0-rc.112/src/internal/effect.ts:6118", [], .deferred⟩
+
+  | external _ => externalPlaceholder
 
 /-- The store operation a row runs on a request value; `none` is a request of the wrong
 shape, which the compile turns into the `badName` defect (`Deep.Stores` does the same for a
 continuation applied to the wrong value). -/
 def syncOpOf : NativeOp → Val → Option SyncOp
   | refMake, Val.nat n => some (SyncOp.refMake (Val.nat n))
-  | refGet, Val.cell k => some (SyncOp.refGet k)
-  | refSet, Val.exitCons (Val.cell k) (Val.exitCons v Val.exitNil) => some (SyncOp.refSet k v)
-  | refGetAndSet, Val.exitCons (Val.cell k) (Val.exitCons v Val.exitNil) =>
-    some (SyncOp.refGetAndSet k v)
-  | refSetAndGet, Val.exitCons (Val.cell k) (Val.exitCons v Val.exitNil) =>
-    some (SyncOp.refSetAndGet k v)
-  | refUpdate f, Val.cell k => some (SyncOp.refUpdate k f)
-  | refGetAndUpdate f, Val.cell k => some (SyncOp.refGetAndUpdate k f)
-  | refUpdateAndGet f, Val.cell k => some (SyncOp.refUpdateAndGet k f)
-  | refUpdateSome f, Val.cell k => some (SyncOp.refUpdateSome k f)
-  | refGetAndUpdateSome f, Val.cell k => some (SyncOp.refGetAndUpdateSome k f)
-  | refUpdateSomeAndGet f, Val.cell k => some (SyncOp.refUpdateSomeAndGet k f)
-  | refModify f, Val.cell k => some (SyncOp.refModify k f)
-  | refModifySome f, Val.cell k => some (SyncOp.refModifySome k f)
+  | refGet, Val.cell ⟨k⟩ => some (SyncOp.refGet ⟨k⟩)
+  | refSet, .list [Val.cell ⟨k⟩, v] => some (SyncOp.refSet ⟨k⟩ v)
+  | refGetAndSet, .list [Val.cell ⟨k⟩, v] => some (SyncOp.refGetAndSet ⟨k⟩ v)
+  | refSetAndGet, .list [Val.cell ⟨k⟩, v] => some (SyncOp.refSetAndGet ⟨k⟩ v)
+  | refUpdate f, Val.cell ⟨k⟩ => some (SyncOp.refUpdate ⟨k⟩ f)
+  | refGetAndUpdate f, Val.cell ⟨k⟩ => some (SyncOp.refGetAndUpdate ⟨k⟩ f)
+  | refUpdateAndGet f, Val.cell ⟨k⟩ => some (SyncOp.refUpdateAndGet ⟨k⟩ f)
+  | refUpdateSome f, Val.cell ⟨k⟩ => some (SyncOp.refUpdateSome ⟨k⟩ f)
+  | refGetAndUpdateSome f, Val.cell ⟨k⟩ => some (SyncOp.refGetAndUpdateSome ⟨k⟩ f)
+  | refUpdateSomeAndGet f, Val.cell ⟨k⟩ => some (SyncOp.refUpdateSomeAndGet ⟨k⟩ f)
+  | refModify f, Val.cell ⟨k⟩ => some (SyncOp.refModify ⟨k⟩ f)
+  | refModifySome f, Val.cell ⟨k⟩ => some (SyncOp.refModifySome ⟨k⟩ f)
   | deferredMake, Val.unit => some SyncOp.deferredMake
-  | deferredIsDone, Val.promise k => some (SyncOp.deferredIsDone k)
-  | deferredPoll, Val.promise k => some (SyncOp.deferredPoll k)
-  | deferredSucceed, Val.exitCons (Val.promise k) (Val.exitCons (Val.nat n) Val.exitNil) =>
-    some (SyncOp.deferredCompleteWith k (Completion.ofExit (Exit.success (Val.nat n))))
-  | deferredFail, Val.exitCons (Val.promise k) (Val.exitCons (Val.nat n) Val.exitNil) =>
-    some (SyncOp.deferredCompleteWith k (Completion.ofExit (Exit.failure (Cause.fail (Err.tag n)))))
+  | deferredIsDone, Val.promise ⟨k⟩ => some (SyncOp.deferredIsDone ⟨k⟩)
+  | deferredPoll, Val.promise ⟨k⟩ => some (SyncOp.deferredPoll ⟨k⟩)
+  | deferredSucceed, .list [Val.promise ⟨k⟩, Val.nat n] =>
+    some (SyncOp.deferredCompleteWith ⟨k⟩ (Completion.ofExit (Exit.success (Val.nat n))))
+  | deferredFail, .list [Val.promise ⟨k⟩, Val.nat n] =>
+    some (SyncOp.deferredCompleteWith ⟨k⟩ (Completion.ofExit (Exit.failure (Cause.fail (Err.tag n)))))
   | scopeMake strategy, Val.unit => some (SyncOp.scopeMake strategy)
+  | clockNow, Val.unit => some SyncOp.clockNow
   | _, _ => none
 
 /-- The deferred an `await` row registers on. -/
 def awaitCellOf : Val → Option DeferredKey
-  | Val.promise k => some k
+  | Val.promise ⟨k⟩ => some ⟨k⟩
+  | _ => none
+
+/-- The millis a `sleep` row registers for (the timer, A4). -/
+def sleepMillisOf : Val → Option Nat
+  | Val.nat n => some n
   | _ => none
 
 end NativeOp
@@ -241,8 +274,83 @@ end NativeOp
 /-- The `Scope` service key of the native signature. -/
 def nativeScopeKey : ServiceKey := ⟨⟨0⟩, ⟨0⟩⟩
 
-/-- The native signature: the rows above and the atoms, for `typeOf` and `print`. -/
-def nativeSignature : Signature NativeOp := ⟨NativeOp.row, nativeAtomTy, nativeScopeKey⟩
+/-- The native signature's service table (the join, 2026-09-07), read off the key: the ambient
+`Scope` under its reserved key, nothing under the other reserved names (`Env.firstFreeName`:
+the scheduler's two references and `CurrentMemoMap` are the machine's, not a program's), and
+for a free name the carrier its type code spells — `4` a number, `5` a boolean, `6` unit, `7`
+a `Ref.Ref<number>` handle, `8` a `SqlClient.SqlClient` handle and `9` a
+`KeyValueStore.KeyValueStore` handle. A key is typed by its own data, which is what `Machine/Key.lean`
+means a `ServiceTypeCode` to be read as. -/
+def nativeServiceTy (key : ServiceKey) : Option Ty :=
+  if key = nativeScopeKey then some Ty.scope
+  else if key.name.value < Effect4.Machine.Env.firstFreeName then none
+  else
+    match key.service.value with
+    | 4 => some .nat
+    | 5 => some .bool
+    | 6 => some .unit
+    | 7 => some NativeOp.refTy
+    | 8 => some NativeOp.sqlTy
+    | 9 => some NativeOp.kvTy
+    | _ => none
+
+def fnNames : List Effect4.Machine.FnName := [.incr, .double, .zeroWhenPositive, .noChange, .takeAndBump]
+
+/-- Every native operation, once. -/
+def NativeOp.all : List NativeOp :=
+  [.refMake, .refGet, .refSet, .refGetAndSet, .refSetAndGet]
+  ++ fnNames.flatMap (fun f =>
+      [.refUpdate f, .refGetAndUpdate f, .refUpdateAndGet f, .refUpdateSome f,
+       .refGetAndUpdateSome f, .refUpdateSomeAndGet f, .refModify f, .refModifySome f])
+  ++ [.deferredMake, .deferredIsDone, .deferredPoll, .deferredSucceed, .deferredFail,
+      .deferredAwait, .scopeMake .sequential, .scopeMake .parallel, .sleep, .clockNow]
+
+/-- An external index reads its supplied row. Built-ins keep their original row. -/
+def nativeRowOf (table : RowTable) : NativeOp → Row
+  | .external i => (table[i]?).getD NativeOp.externalPlaceholder
+  | op => op.row
+
+@[simp] theorem nativeRowOf_nil (op : NativeOp) : nativeRowOf [] op = op.row := by
+  cases op <;> rfl
+
+/-- The native signature uses the same canonical linked-row types as external preparation
+and admission (`externalRow`). Raw table entries retain their source spelling/provenance. -/
+def nativeSignature (table : RowTable := []) : Signature NativeOp :=
+  { rowOf := fun op => (nativeRowOf table op).normalizeTypes, atomOf := nativeAtomTy, scopeKey := nativeScopeKey,
+    serviceTy := nativeServiceTy,
+    dom := fun | .external i => decide (i < table.length) | _ => true }
+
+/-! ## Which supplied tables this runner can register (v2 DI-61 (b))
+
+`LawfulTable` (`src/Effect4/Codegen/Read.lean`) is about *names*: unique keys, no built-in
+collision, no dropped trailing name, no captured binder. It says nothing about how a row is
+answered, so a table can be lawful, type a program and print it, and still supply no runnable
+registration — the row with `registration := .deferred` of
+`docs/research/foundation-probes/Admission.lean:13` parks with its answer unused and refuses
+an explicit `answerAsync` as `notExternal`. `checkTable` is that missing decision, with the
+position of the first row this runner cannot register. `LawfulTable` is unchanged. -/
+
+/-- A row a supplied table cannot be registered by, and where it sits. The two conditions are
+`externalRow`'s (`src/Effect4/Program/Compile.lean`), read in its order: who answers the row
+first, then whether it is asynchronous at all. -/
+inductive TableRefusal
+  /-- The row at this position is not answered by the external oracle. -/
+  | notExternal (index : Nat)
+  /-- The row at this position is answered externally but is not an asynchronous row. -/
+  | notAsync (index : Nat)
+deriving DecidableEq, Repr
+
+/-- The first position of a supplied table this runner cannot register, `none` when every row
+is `(registration := .external, kind := .async)`. An empty table is accepted: a program with
+no external call needs no row. -/
+def checkTable (table : RowTable) : Option TableRefusal :=
+  (List.range table.length).findSome? fun index =>
+    match table[index]? with
+    | some row =>
+      if row.registration ≠ .external then some (.notExternal index)
+      else if row.kind ≠ .async then some (.notAsync index)
+      else none
+    | none => none
 
 /-- A program of the native route. -/
 abbrev NativeEff := Eff NativeOp

@@ -1,3 +1,4 @@
+import Effect4.Laws
 import Test.Support.Environment
 import Test.Schema.AxiomReport
 import Test.Data.OpticContract
@@ -73,9 +74,10 @@ import Test.Store.WordContract
 import Test.Store.TraitContract
 import Test.Store.ProbeContract
 import Test.Store.DerivedCheck
-import Test.Evidence.ArchContract
 import Test.Codegen.PrintContract
 import Test.Codegen.ReadContract
+import Test.Ingest.TaxonomyContract
+import Test.Codegen.FormsContract
 import Test.Codegen.ReadAxiomReport
 import Test.Program.Gen
 import Test.Codegen.RuleContract
@@ -85,6 +87,7 @@ import Test.Ingest.WranglerContract
 import Test.Ingest.McpContract
 import Test.Program.CompileContract
 import Test.Program.TypedContract
+import Test.Program.WeakenContract
 import Test.Program.TypedAxiomReport
 import Test.Program.DenoteContract
 import Test.Program.DenoteAxiomReport
@@ -92,6 +95,14 @@ import Test.Program.AgreementContract
 import Test.Program.AgreementAxiomReport
 import Test.Program.ProgressContract
 import Test.Program.ProgressAxiomReport
+import Test.Program.InvocationContract
+import Test.Program.InvocationAxiomReport
+import Test.Program.HostSpecContract
+import Test.Program.HostSpecAxiomReport
+import Test.Program.HostBoundaryContract
+import Test.Program.HostBoundaryAxiomReport
+import Test.Api.HostSessionContract
+import Test.Api.HostSessionAxiomReport
 import Test.Program.SchedContract
 import Test.Program.SchedAxiomReport
 import Test.Program.DenoteRContract
@@ -103,14 +114,20 @@ import Test.Program.ProvisionContract
 import Test.Program.ProvisionAxiomReport
 import Test.Program.ConfigContract
 import Test.Program.ConfigAxiomReport
-import Test.Surface.ObservabilityAxiomReport
 import Test.Surface.ProvisionContract
 import Test.Surface.ProvisionAxiomReport
-import Test.Codegen.LayerPrintAxiomReport
 import Test.Api.ApiContract
+import Test.Program.ScopedTypingContract
+import Test.Program.NativeAtomContract
+import Test.Program.ErrorQueriesContract
 import Test.Machine.Fuzz
 import Test.Audit.RuntimeCoverage
 import Test.Audit.AxiomGate
+import Test.Program.TypeAlgebraContract
+import Test.Program.TypeAlgebraAxiomReport
+import Test.Program.ValueModelContract
+import Test.Program.TypingCheckContract
+import Test.Program.LinkedRowsContract
 
 /-!
 # Effect4 test battery

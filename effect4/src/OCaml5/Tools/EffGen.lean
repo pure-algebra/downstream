@@ -1,5 +1,7 @@
+import Tools.GeneratedStamp
 import OCaml5.Eff.Emit
 import OCaml5.Eff.Goldens
+import OCaml5.Eff.Metadata
 
 /-!
 # EffGen — write the `eff/` library and its goldens
@@ -17,7 +19,7 @@ Writes into `<outdir>`:
                       length-directed decoder, per type, over the hand-written `Eff_frame`;
 * `eff_json.ml`     — the JSON printer (a printer only) per type, over `Eff_json_text`;
 * `eff_native.ml`   — the native alphabet as data: the atom typing table (verified here against
-                      `nativeAtomTy` on probes), every `NativeOp` value with its `Row`, the
+                      `nativeAtomTy` on probes), every built-in `NativeOp` value with its `Row`, the empty-table external placeholder, the
                       signature's scope key;
 * `eff_manifest.txt` — one line per family: constructor names, arities and argument carriers;
 * `goldens/<name>.{bin,json,ty}` and `goldens/corpus.txt` — the corpus below, encoded by the
@@ -50,13 +52,15 @@ open Effect4.Machine (FnName)
 
 namespace OCaml5.Eff
 
-def countOps (nativeOp : Family) : Nat × Nat × Nat :=
-  nativeOp.ctors.foldl (init := (0, 0, 0)) fun (nul, fn, st) c =>
+def countOps (nativeOp : Family) : Nat × Nat × Nat × Nat :=
+  nativeOp.ctors.foldl (init := (0, 0, 0, 0)) fun (nul, fn, st, indexed) c =>
     match c.args with
-    | [] => (nul + 1, fn, st)
-    | [(_, .named "fn_name")] => (nul, fn + 1, st)
-    | [(_, .named "finalizer_strategy")] => (nul, fn, st + 1)
-    | _ => (nul, fn, st)
+    | [] => (nul + 1, fn, st, indexed)
+    | [(_, .named "fn_name")] => (nul, fn + 1, st, indexed)
+    | [(_, .named "finalizer_strategy")] => (nul, fn, st + 1, indexed)
+    | [(_, .int)] => (nul, fn, st, indexed + 1)
+    | _ => (nul, fn, st, indexed)
+
 
 
 end OCaml5.Eff
@@ -69,6 +73,10 @@ def main (args : List String) : IO Unit := do
   let env ← importModules #[{ module := `Effect4.Program.Native }] {} 0
   let ctx : Core.Context := { fileName := "<effgen>", fileMap := default }
   let (bs, _) ← ((readBlocks.run' {}).toIO ctx { env := env })
+  let (sourceBlocks, _) ← ((Tools.ProgramStructure.readBlocks.run' {}).toIO ctx { env := env })
+  let sourceJson ← match Tools.ProgramStructure.descriptorJson sourceBlocks with
+    | .ok json => pure json
+    | .error message => throw (IO.userError message)
   let families := bs.flatten
   -- constructor indices, by full name, from the environment; a structure's tree names the
   -- type (`V.struct`), normalised here to its one constructor
@@ -82,16 +90,16 @@ def main (args : List String) : IO Unit := do
   let famOf (n : Name) : Option Family := families.find? (·.spec.leanName == n)
   let ctorCount (n : Name) : Nat := (famOf n).map (·.ctors.length) |>.getD 0
   -- cross-checks before anything is written
-  unless fnNames.length == ctorCount `Effect4.Machine.FnName && fnNames.eraseDups.length == fnNames.length do
+  unless OCaml5.Eff.fnNames.length == ctorCount `Effect4.Machine.FnName && OCaml5.Eff.fnNames.eraseDups.length == OCaml5.Eff.fnNames.length do
     throw (IO.userError "EffGen: fnNames does not enumerate FnName")
   unless FinalizerStrategy.all.length == ctorCount `Effect4.FinalizerStrategy do
     throw (IO.userError "EffGen: FinalizerStrategy.all does not enumerate FinalizerStrategy")
   let some nativeOp := famOf `Effect4.Program.NativeOp | throw (IO.userError "EffGen: NativeOp missing")
-  let (nul, fn, st) := countOps nativeOp
-  unless nul + fn + st == nativeOp.ctors.length do
+  let (nul, fn, st, indexed) := countOps nativeOp
+  unless nul + fn + st + indexed == nativeOp.ctors.length do
     throw (IO.userError "EffGen: a NativeOp constructor has an argument shape this tool does not enumerate")
-  unless allOps.length == nul + fn * fnNames.length + st * FinalizerStrategy.all.length do
-    throw (IO.userError s!"EffGen: allOps has {allOps.length} values, the constructor table implies {nul + fn * fnNames.length + st * FinalizerStrategy.all.length}")
+  unless allOps.length == nul + fn * OCaml5.Eff.fnNames.length + st * FinalizerStrategy.all.length do
+    throw (IO.userError s!"EffGen: allOps has {allOps.length} values, the constructor table implies {nul + fn * OCaml5.Eff.fnNames.length + st * FinalizerStrategy.all.length}")
   unless allOps.eraseDups.length == allOps.length do throw (IO.userError "EffGen: allOps repeats a value")
   match checkAtoms with
   | .ok () => pure ()
@@ -103,13 +111,48 @@ def main (args : List String) : IO Unit := do
       unless idx.contains (norm n) do
         throw (IO.userError s!"EffGen: {nm} uses {n}, not a constructor of the closed world")
   let lookup (n : Name) : Nat := (idx.find? (norm n)).getD 0
+  for (nm, p, t) in trees do
+    unless t.bytes lookup == Effect4.Store.Canonical.encode p do
+      throw (IO.userError s!"EffGen: {nm} hand tree disagrees with Canonical.encode")
+  let mut metadataCoverage : NameMap Nat := {}
+  let mut metadataLines : List String := []
+  for f in Metadata.all do
+    for n in f.tree.names do
+      unless idx.contains (norm n) do
+        throw (IO.userError s!"EffGen: metadata {f.name} uses unknown constructor {n}")
+      metadataCoverage := metadataCoverage.insert (norm n)
+        ((metadataCoverage.find? (norm n)).getD 0 + 1)
+    unless f.tree.bytes lookup == f.bytes do
+      throw (IO.userError s!"EffGen: metadata {f.name} hand tree disagrees with Canonical.encode")
+    let hex := String.join (f.bytes.map fun b =>
+      let s := String.ofList (Nat.toDigits 16 b.toNat)
+      "".pushn '0' (2 - s.length) ++ s)
+    metadataLines := metadataLines ++ ["\t".intercalate
+      [f.name, f.family.getString!, hex, f.tree.json, f.node.compress]]
+  let mut metadataRows : List String := []
+  for f in families do
+    if ! (Metadata.all.any (·.family == f.spec.leanName)) then continue
+    for c in f.ctors do
+      let count := (metadataCoverage.find? c.name).getD 0
+      if count == 0 then throw (IO.userError s!"EffGen: metadata reaches no {c.name}")
+      metadataRows := metadataRows ++ [s!"{c.name}\t{count}"]
+  let stamp ← Tools.GeneratedStamp.line "src/OCaml5/Tools/EffGen.lean" ["Effect4.Program.Native"]
   -- write
   IO.FS.createDirAll out
   IO.FS.createDirAll (out / "goldens")
-  IO.FS.writeFile (out / "eff_types.ml") (emitTypes bs)
-  IO.FS.writeFile (out / "eff_wire.ml") (emitWire bs)
-  IO.FS.writeFile (out / "eff_json.ml") (emitJson bs)
-  IO.FS.writeFile (out / "eff_native.ml") (emitNative nul fn st)
+  IO.FS.writeFile (out / "program-structure.json") (sourceJson.compress ++ "\n")
+  let wireFamilies := bs.flatten.map fun f =>
+    let fields := if f.isStruct then f.ctors.head!.args.map (·.1) else f.ctors.map (·.short)
+    "(" ++ ostr f.spec.leanName.getString! ++ ", [" ++ "; ".intercalate (fields.map ostr) ++ "])"
+  IO.FS.writeFile (out / "eff_layout.ml") ("(* " ++ stamp ++ " *)\n" ++
+    "(* GENERATED source-structure view; no runtime or execution-permission claim. *)\n" ++
+    "let wire_families = [\n  " ++ ";\n  ".intercalate wireFamilies ++ "\n]\n")
+  IO.FS.writeFile (out / "goldens" / "metadata.tsv") ("\n".intercalate metadataLines ++ "\n")
+  IO.FS.writeFile (out / "goldens" / "coverage-metadata.txt") ("\n".intercalate metadataRows ++ "\n")
+  IO.FS.writeFile (out / "eff_types.ml") ("(* " ++ stamp ++ " *)\n" ++ emitTypes bs)
+  IO.FS.writeFile (out / "eff_wire.ml") ("(* " ++ stamp ++ " *)\n" ++ emitWire bs)
+  IO.FS.writeFile (out / "eff_json.ml") ("(* " ++ stamp ++ " *)\n" ++ emitJson bs)
+  IO.FS.writeFile (out / "eff_native.ml") ("(* " ++ stamp ++ " *)\n" ++ emitNative nul fn st)
   IO.FS.writeFile (out / "eff_manifest.txt") (manifest bs)
   let mut corpusLines : Array String := #[]
   let mut coverage : NameMap Nat := {}
@@ -130,13 +173,20 @@ def main (args : List String) : IO Unit := do
   let mut missing : Array String := #[]
   for f in families do
     if [`Effect4.Program.Ty, `Effect4.Program.RowKind, `Effect4.Program.RowShape, `Effect4.ServiceName,
-        `Effect4.ServiceTypeCode, `Effect4.ServiceKey, `Effect4.Program.Row, `Effect4.Program.EffTy].contains f.spec.leanName then
+        `Effect4.ServiceTypeCode, `Effect4.ServiceKey, `Effect4.Program.Registration, `Effect4.Program.Row, `Effect4.Program.EffTy].contains f.spec.leanName then
       continue
     for c in f.ctors do
       let k := (coverage.find? c.name).getD 0
       cov := cov.push s!"{c.name}\t{k}"
       if k == 0 then missing := missing.push c.name.toString
   IO.FS.writeFile (out / "goldens" / "coverage.txt") ("\n".intercalate cov.toList ++ "\n")
+  Tools.GeneratedStamp.sidecar (out / "eff_manifest.txt") stamp
+  Tools.GeneratedStamp.sidecar (out / "program-structure.json") stamp
+  for (name, _, _) in trees do
+    for suffix in [".bin", ".json", ".ty"] do
+      Tools.GeneratedStamp.sidecar (out / "goldens" / (name ++ suffix)) stamp
+  for name in ["corpus.txt", "coverage.txt", "metadata.tsv", "coverage-metadata.txt"] do
+    Tools.GeneratedStamp.sidecar (out / "goldens" / name) stamp
   unless missing.isEmpty do
     throw (IO.userError s!"EffGen: the corpus reaches no {missing}")
   IO.println s!"EffGen: {families.length} families, {trees.length} corpus programs, written to {outDir}"

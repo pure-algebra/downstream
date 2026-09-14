@@ -5,6 +5,10 @@
 #   ts/eff/json.gen.ts     one JSON writer per family (the bytes Lean and OCaml write)
 #   ts/eff/profile.gen.ts  the image profile: address, reserved heads, and one entry per
 #                          native operation (the operation and its row as nodes), stamped
+#   ts/eff/taxonomy.gen.ts  refusal codes and their active/reserved partition, stamped
+#   ts/eff/forms.gen.ts     relative templates and foreign spelling metadata, stamped
+#   ts/eff/wire.gen.ts      canonical byte writers for every closed-world family
+#   ts/eff/packages.gen.ts  the canonical package tables (key, service code, target, rows), stamped
 #
 #   scripts/generate-ts-eff.sh [<dir>]      default ts/eff
 #
@@ -22,7 +26,7 @@ out="${1:-$repo_root/ts/eff}"
 cd "$repo_root"
 
 build_log="$(mktemp "${TMPDIR:-/tmp}/effect4-ts-eff-build.XXXXXX")"
-if ! lake build Tools.TsGen >"$build_log" 2>&1; then
+if ! timeout 600 lake build Tools.TsGen >"$build_log" 2>&1; then
   printf 'FAIL generate-ts-eff: lake build Tools.TsGen failed\n' >&2
   cat "$build_log" >&2
   rm -f "$build_log"
@@ -30,4 +34,4 @@ if ! lake build Tools.TsGen >"$build_log" 2>&1; then
 fi
 rm -f "$build_log"
 
-lean_run tools/Tools/TsGen.lean "$out"
+timeout 600 bash -c '. scripts/lib/portable.sh; lean_run "$@"' _ tools/Tools/TsGen.lean "$out"

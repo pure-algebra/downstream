@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Byte-for-byte drift gate for the TypeScript estate's generated files,
-# ts/eff/{eff,json,profile}.gen.ts: the tracked files must be exactly what
+# ts/eff/{eff,json,profile,taxonomy,forms,wire}.gen.ts: the tracked files must be exactly what
 # scripts/generate-ts-eff.sh writes from the current Lean environment.
 #
 #   scripts/check-ts-eff.sh
@@ -12,7 +12,7 @@
 # everything it imports: the World reader, the native table, the reader's heads,
 # the codegen profile), the two files the generator reads at run time
 # (`lakefile.toml` for the typescript revision in the address,
-# `src/Effect4/Codegen/Print.lean` for the head cross-check), and the three tracked
+# `src/Effect4/Codegen/Print.lean` for the head cross-check), and the six tracked
 # `.gen.ts` files themselves — so a hand edit of a generated file is a miss and a
 # failure, and a sweep with nothing changed under any of these re-runs nothing.
 set -euo pipefail
@@ -23,7 +23,7 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 gate=ts-eff
 generator="$repo_root/scripts/generate-ts-eff.sh"
-files=(eff.gen.ts json.gen.ts profile.gen.ts)
+files=(eff.gen.ts json.gen.ts profile.gen.ts taxonomy.gen.ts forms.gen.ts wire.gen.ts packages.gen.ts)
 cd "$repo_root"
 
 [[ -x "$generator" ]] || { printf 'FAIL %s: %s is not executable\n' "$gate" "$generator" >&2; exit 1; }
@@ -45,11 +45,13 @@ fi
 rm -f "$build_log"
 
 key="$(stamp_key \
-  "${BASH_SOURCE[0]}" "$generator" \
+  "${BASH_SOURCE[0]}" "$generator" "$repo_root/scripts/lib/generated_bytes.py" \
   "$repo_root/lean-toolchain" "$repo_root/lakefile.toml" \
   "$repo_root/src/Effect4/Codegen/Print.lean" \
   "$stamp_build_lib/Tools/TsGen.trace" \
-  "$repo_root/ts/eff/eff.gen.ts" "$repo_root/ts/eff/json.gen.ts" "$repo_root/ts/eff/profile.gen.ts")"
+  "$repo_root/ts/eff/eff.gen.ts" "$repo_root/ts/eff/json.gen.ts" "$repo_root/ts/eff/profile.gen.ts" \
+  "$repo_root/ts/eff/taxonomy.gen.ts" "$repo_root/ts/eff/forms.gen.ts" "$repo_root/ts/eff/wire.gen.ts" \
+  "$repo_root/ts/eff/packages.gen.ts")"
 if stamp_hit "$gate" "$key"; then
   stamp_report "$gate" "$key"
   exit 0
@@ -71,12 +73,12 @@ trap cleanup EXIT
 
 summary="$("$generator" "$tmp_root" | sed -n '1p')"
 for f in "${files[@]}"; do
-  if ! cmp -s -- "$tmp_root/$f" "ts/eff/$f"; then
+  if ! python3 "$repo_root/scripts/lib/generated_bytes.py" "$tmp_root/$f" "ts/eff/$f"; then
     printf 'FAIL %s: ts/eff/%s is not what Lean emits; run scripts/generate-ts-eff.sh\n' "$gate" "$f" >&2
     diff -u -- "ts/eff/$f" "$tmp_root/$f" >&2 | head -60 || true
     exit 1
   fi
 done
 
-printf 'PASS %s: ts/eff/{eff,json,profile}.gen.ts are what Lean emits; %s\n' "$gate" "$summary"
+printf 'PASS %s: ts/eff/{eff,json,profile,taxonomy,forms,wire,packages}.gen.ts are what Lean emits; %s\n' "$gate" "$summary"
 stamp_write "$gate" "$key" "$summary"

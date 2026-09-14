@@ -1,5 +1,5 @@
 import Effect4.Program.Compile
-import Effect4.Machine.Witnesses
+import Effect4.Laws.Machine.Witnesses
 
 /-!
 # Compile contract — `Eff` programs through the frame machine, pinned
@@ -8,7 +8,7 @@ Plan: `docs/research/2026-09-04-eff-compile.md`. `src/Effect4/Program/Compile.le
 `NativeEff` and a `Point` to a primitive of the reference machine over the `EffName` /
 `EffThunk` alphabet, and `interpOf root` gives those names their meaning by compiling the
 subterm each point addresses. This battery runs compiled programs on explicit decision
-tapes, in the idiom of `src/Effect4/Machine/Witnesses.lean`, and pins what the machine does.
+tapes, in the idiom of `src/Effect4/Laws/Machine/Witnesses.lean`, and pins what the machine does.
 
 Every program is also pinned well-typed (`typeOf nativeSignature`), except the two that are
 deliberately ill-typed and pinned refused. Every helper below is structural, and every pin is
@@ -64,6 +64,7 @@ def spawn (root : NativeEff) : MC := spawnTape root []
 three `ReplayResult` arms answer the machine; `stuckOf` and `replayArm` are how a pin observes
 which arm it landed on. -/
 def replayEffTape (root : NativeEff) (decisions : List Bool) (tape : List DC) : MC :=
+  letI := evaluatorFor root
   match replayEval (interpOf root) fuel tape (spawnTape root decisions) with
   | ReplayResult.finished m => m
   | ReplayResult.frontier m => m
@@ -74,6 +75,7 @@ def replayEff (root : NativeEff) (tape : List DC) : MC := replayEffTape root [] 
 
 /-- The arm the tape landed on: `0` finished, `1` frontier, `2` stuck. -/
 def replayArm (root : NativeEff) (decisions : List Bool) (tape : List DC) : Nat :=
+  letI := evaluatorFor root
   match replayEval (interpOf root) fuel tape (spawnTape root decisions) with
   | ReplayResult.finished _ => 0
   | ReplayResult.frontier _ => 1
@@ -170,6 +172,39 @@ def pFail : NativeEff := .fail (.lit (.nat 7))
 #guard (typeOf nativeSignature pFail).isSome
 #guard exitOf (replayEff pFail [evaluateRoot]) 0
   = some (Exit.failure (Cause.fail (Err.tag 7)))
+
+/-- `Effect.fail(pair("SqlError", "boom"))`: a pair of strings is the tagged package error of
+DB-15; text has its own error image, while unsupported raw values stay `boom`. -/
+def pFailTagged : NativeEff :=
+  .fail (.app "pair" (.cons (.lit (.str "SqlError")) (.cons (.lit (.str "boom")) .nil)))
+
+#guard (typeOf nativeSignature pFailTagged).isSome
+#guard exitOf (replayEff pFailTagged [evaluateRoot]) 0
+  = some (Exit.failure (Cause.fail (Err.tagged "SqlError" "boom")))
+#guard errOf (Val.list [Val.str "SqlError", Val.str "boom"]) = Err.tagged "SqlError" "boom"
+#guard errOf (Val.list [Val.str "SqlError"]) = Err.boom
+#guard errOf (Val.list [Val.str "SqlError", Val.nat 1]) = Err.boom
+#guard errOf (Val.bool true) = Err.boom
+
+
+/-- DI-62: text remains text through ordinary and generator-style failure. -/
+def pFailText : NativeEff := .fail (.lit (.str "lost"))
+def pYieldText : NativeEff := .yieldError (.lit (.str "lost"))
+def pCauseText : NativeEff := .failCause (.fail (.lit (.str "lost")))
+#guard (typeOf nativeSignature pFailText).isSome
+#guard (typeOf nativeSignature pYieldText).isSome
+#guard (typeOf nativeSignature pCauseText).isSome
+#guard exitOf (replayEff pFailText [evaluateRoot]) 0 = some (.failure (Cause.fail (.text "lost")))
+#guard exitOf (replayEff pYieldText [evaluateRoot]) 0 = some (.failure (Cause.fail (.text "lost")))
+#guard exitOf (replayEff pCauseText [evaluateRoot]) 0 = some (.failure (Cause.fail (.text "lost")))
+#guard orDieCause (Cause.fail (.text "lost")) = Cause.die (.error (.text "lost"))
+#guard orDieCause (Cause.fail (.tagged "SqlError" "boom")) = Cause.die (.error (.tagged "SqlError" "boom"))
+#guard orDieCause (Cause.fail (.tag 4)) = Cause.die (.user 4)
+#guard orDieCause (Cause.fail .boom) = Cause.die .badName
+-- A leading unrepresented boom is selected, not skipped in favor of a later payload.
+#guard orDieCause (Cause.combine (Cause.fail .boom) (Cause.fail (.text "later"))) = Cause.die .badName
+#guard orDieCause (Cause.combine (Cause.die (.user 2)) (Cause.interrupt none)) =
+  Cause.combine (Cause.die (.user 2)) (Cause.interrupt none)
 
 /-- `Effect.catchCause`: the handler receives the reified cause and answers `9`. -/
 def pCatch : NativeEff := .catchCause pFail (.succeed (.lit (.nat 9)))
@@ -376,15 +411,16 @@ def pDaemon : NativeEff :=
 
 The scope is made by the `sync` the compile binds first, the context is provided, the child is
 linked to the scope by a keyed fiber finalizer, the body ends with the child's handle, and the
-scope's close interrupts the child. The finalizer key is the `withFiber` point's fuel (`398`
-under `fuel = 400`: two `bind` children below the root), which is what makes it pinnable. -/
+scope's close interrupts the child. The finalizer key is the identity the store allocates at
+this registration (`E4-CHECK-CE-016`, `internal/effect.ts:5366`): the scoped entry takes name
+`0` for the scope handle, so the registration takes `1`. -/
 
 def pScoped : NativeEff :=
   .scoped (.bind (.perform .deferredMake (.lit .unit))
     (.withFiber (.forkScoped (.callback .deferredAwait (.var 0)) scopedChild)))
 
 #guard (typeOf nativeSignature pScoped).isSome
-#guard scopeRows (replayEff pScoped [evaluateRoot]) = [[0, 0, 0, 398, 1]]
+#guard scopeRows (replayEff pScoped [evaluateRoot]) = [[0, 0, 0, 1, 1]]
 #guard exitOf (replayEff pScoped [evaluateRoot]) 1 = some (interruptedFrom ⟨0⟩ ⟨1⟩)
 #guard exitOf (replayEff pScoped [evaluateRoot]) 0 = some (Exit.success (Val.fiber ⟨1⟩))
 #guard fiberCount (replayEff pScoped [evaluateRoot]) = 2
@@ -628,5 +664,98 @@ def pBadPark : NativeEff :=
 #guard (typeOf nativeSignature pBadPark).isNone
 #guard exitOf (replayEff pBadPark [evaluateRoot]) 0
   = some (Exit.failure (Cause.die Defect.badName))
+
+/-! ## The `finalizerOr` regression net, on the compile route (the join, 2026-09-07)
+
+The Layer machine's five guards (`git:4aae12f:src/Effect4/Machine/Layer.lean:2051-2074`, the
+machine defect that spike found; the file retired with the join): `scoped` must close its scope whether or not another `OnExit` frame
+sits under it, and every build sits under `updateContext`'s restoring frame
+(`internal/effect.ts:2092`). Re-spelled here program for program on the compile route, where
+`scoped`'s exit is the atomic native callback (V1, `exitScoped`) rather than a finalizer
+program: the counted rows are the region restores, `Effect.provide`'s scope close and the
+releases, never `scoped`'s own close, and what the net pins is that every scope a run
+allocates is closed on the way out. -/
+
+/-- Every scope the run allocated, with whether it is closed (Layer.lean's `witnessScopes`). -/
+def scopeStates (m : MC) : List (Nat × Bool) :=
+  m.state.scopes.entries.map fun e => (e.key, e.scope.isClosed)
+
+def netRun (p : NativeEff) : MC := replayEff p [evaluateRoot]
+
+/-- A number-typed service key (code `4`, `nativeServiceTy`). -/
+def netKey : ServiceKey := ⟨⟨4⟩, ⟨4⟩⟩
+
+-- One `scoped`: its scope closes.
+#guard scopeStates (netRun (.scoped (.succeed (.lit (.nat 7))))) = [(0, true)]
+-- Two adjacent: both close.
+#guard scopeStates (netRun (.scoped (.scoped (.succeed (.lit (.nat 7)))))) = [(0, true), (1, true)]
+-- Separated by a continuation frame, both close as well.
+#guard scopeStates (netRun
+    (.scoped (.bind (.scoped (.succeed (.lit (.nat 1)))) (.succeed (.lit (.nat 7)))))) =
+  [(0, true), (1, true)]
+
+/-- The shape every build has: `Effect.provide`'s scope under `scoped`, the build under the
+`CurrentMemoMap` region's restoring frame (`Layer.ts:762`). Both scopes close; the two
+finalizer programs are the region's restore and the provide scope's close — the body is an
+exit, so `provideContext` adds no region (`internal/effect.ts:2196`). -/
+def netBuild : NativeEff :=
+  .scoped (.provideLayer (.succeed netKey (.nat 1)) false (.succeed (.lit (.nat 7))))
+
+#guard (typeOf nativeSignature netBuild).isSome
+#guard scopeStates (netRun netBuild) = [(0, true), (1, true)]
+#guard finalizerRuns (netRun netBuild) 0 = 2
+
+/-- A memoized leaf under `provide` under `scoped`: `scoped`'s scope, the provide scope, the
+`fromBuild` child and the layer scope (`2` and `4` are the memo map and the entry's deferred,
+minted from the same counter) all close, and the service reads through. -/
+def netMemo : NativeEff :=
+  .scoped (.provideLayer (.effect netKey (.succeed (.lit (.nat 1)))) false (.service netKey))
+
+#guard (typeOf nativeSignature netMemo).isSome
+#guard scopeStates (netRun netMemo) = [(0, true), (1, true), (3, true), (5, true)]
+#guard finalizerRuns (netRun netMemo) 0 = 6
+#guard exitOf (netRun netMemo) 0 = some (Exit.success (Val.nat 1))
+
+-- `scope.acquire-release` (Layer.lean's W10): the release registered on the ambient scope
+-- runs at the close, and the acquire's value is the answer.
+#guard scopeStates (netRun
+    (.scoped (.acquireRelease (.succeed (.lit (.nat 5))) (.succeed (.lit .unit))))) = [(0, true)]
+#guard exitOf (netRun
+    (.scoped (.acquireRelease (.succeed (.lit (.nat 5))) (.succeed (.lit .unit))))) 0 =
+  some (Exit.success (Val.nat 5))
+
+/-! ## The timer on the program route (A4, commit 2)
+
+`Effect.sleep(d)` is the async row's callback: `0` is the counted yield (`internal/effect.ts:6054`),
+the rest parks on the logical clock until an `advance` fires it (`Machine/Timer.lean`,
+DB-14). `Effect.currentTimeMillis` reads the clock. The two shapes the machine-level
+fixtures could not spell (`SchedulerCoreContract` §Timer): a woken fiber reads the staged
+clock, and a woken fiber's sleep fires in the same advance (finding 4 of the timer note). -/
+
+def pSleep : NativeEff := .callback .sleep (.lit (.nat 5))
+def pSleepZero : NativeEff := .callback .sleep (.lit (.nat 0))
+def pSleepNow : NativeEff := .bind (.callback .sleep (.lit (.nat 3))) (.perform .clockNow (.lit .unit))
+def pSleepTwice : NativeEff := .bind (.callback .sleep (.lit (.nat 1))) (.callback .sleep (.lit (.nat 1)))
+def pClockNow : NativeEff := .perform .clockNow (.lit .unit)
+
+#guard (typeOf nativeSignature pSleep).isSome ∧ (typeOf nativeSignature pSleepNow).isSome
+#guard (typeOf nativeSignature pSleepTwice).isSome ∧ (typeOf nativeSignature pClockNow).isSome
+-- a sleep parks; an advance short of the deadline leaves it parked; the deadline fires it
+#guard exitOf (replayEff pSleep [evaluateRoot]) 0 = none
+#guard exitOf (replayEff pSleep [evaluateRoot, .advance 4]) 0 = none
+#guard exitOf (replayEff pSleep [evaluateRoot, .advance 5]) 0 = some (.success .unit)
+#guard exitOf (replayEff pSleep [evaluateRoot, .advance 4, .advance 1]) 0 = some (.success .unit)
+-- `sleep 0` is the counted yield: the flush resumes it, no advance needed
+#guard exitOf (replayEff pSleepZero [evaluateRoot]) 0 = none
+#guard exitOf (replayEff pSleepZero [evaluateRoot, .flush]) 0 = some (.success .unit)
+-- the woken fiber reads the clock staged at its deadline, not the advance's end
+#guard exitOf (replayEff pSleepNow [evaluateRoot, .advance 10]) 0 = some (.success (.nat 3))
+-- finding 4: the sleep a woken fiber registers fires in the same advance when due by its end
+#guard exitOf (replayEff pSleepTwice [evaluateRoot, .advance 2]) 0 = some (.success .unit)
+#guard exitOf (replayEff pSleepTwice [evaluateRoot, .advance 1]) 0 = none
+#guard exitOf (replayEff pSleepTwice [evaluateRoot, .advance 1, .advance 1]) 0 = some (.success .unit)
+-- the clock read: zero at the start, the sum of the advances after
+#guard exitOf (replayEff pClockNow [evaluateRoot]) 0 = some (.success (.nat 0))
+#guard exitOf (replayEff pClockNow [.advance 7, .advance 0, evaluateRoot]) 0 = some (.success (.nat 7))
 
 end Test.Syntax.CompileContract

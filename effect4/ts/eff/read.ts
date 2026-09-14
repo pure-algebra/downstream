@@ -2,9 +2,10 @@
 //
 //   readTypeScript(source)
 //     │ parseSync           text → oxc's ESTree                             (oxc-parser)
-//     │ programExprOf       the one expression a program file holds          § 2
+//     │ programModuleOf     the declarations and the one program a file holds § 2
 //     │ exprOf              ESTree → the fragment the Lean printer emits      § 2
 //     │ readEff(0, ·)       fragment → Eff, src/Effect4/Codegen/Read.lean clause for clause   § 3
+//     │ readModule          the hoisted layers put back at their paths        § 4
 //     └ decodeEff           the node checked against the schema             (eff.gen.ts)
 //
 // Everything else in this package is generated from Lean: the nodes (eff.gen.ts), their
@@ -13,7 +14,7 @@
 
 import { Result } from "effect"
 import { parseSync } from "oxc-parser"
-import type { ActionTerm, CauseTerm, Eff, ForkOptions, Stmt, Term } from "./eff.gen.ts"
+import type { ActionTerm, CauseTerm, Eff, ForkOptions, LayerTerm, Lit, Row, ServiceKey, Stmt, Term, Ty } from "./eff.gen.ts"
 import { decodeEff } from "./eff.gen.ts"
 import { heads, rows, type Entry, type Head } from "./profile.gen.ts"
 
@@ -41,20 +42,31 @@ export type Refusal =
 
 export type Read<A> = Result.Result<A, Refusal>
 
-/** One program file's text into an Eff node, or the refusal that names what was not readable. */
-export const readTypeScript = (source: string, filename = "program.ts"): Read<Eff> => {
-  const parsed = parseSync(filename, source, { sourceType: "module", lang: "ts" })
-  if (parsed.errors.length > 0) return refuse({ _tag: "parse", messages: parsed.errors.map((e) => e.message) })
-  const program = parsed.program as unknown
-  if (!isNode(program)) return refuse({ _tag: "program", what: "no program" })
-  const expression = programExprOf(program)
-  if (failed(expression)) return again(expression)
-  const fragment = exprOf(expression.success)
+/** One program file's text into an Eff node, or the refusal that names what was not readable.
+ * `table` is the supplied row table (`Api.read (table := …)`): its rows are the external
+ * operations, by position; the printed corpus reads under the empty table. */
+export const readTypeScript = (source: string, filename = "program.ts", table: ReadonlyArray<Row> = []): Read<Eff> =>
+  withTable(table, () => {
+    const parsed = parseSync(filename, source, { sourceType: "module", lang: "ts" })
+    if (parsed.errors.length > 0) return refuse({ _tag: "parse", messages: parsed.errors.map((e) => e.message) })
+    const program = parsed.program as unknown
+    if (!isNode(program)) return refuse({ _tag: "program", what: "no program" })
+    const module = programModuleOf(program)
+    if (failed(module)) return again(module)
+    const { declarations, main } = module.success
+    return declarations.length === 0 ? Result.map(readProgramExpr(main), decodeEff) : readModule(declarations, main)
+  })
+
+/** Fragment seam for the independent oxc normalization and printer-image test entrypoint. */
+export const readExpression = (expression: unknown, table: ReadonlyArray<Row> = []): Read<Eff> =>
+  withTable(table, () => Result.map(readProgramExpr(expression), decodeEff))
+
+/** The same, before the schema decode: what a declaration block's main expression reads to. */
+const readProgramExpr = (expression: unknown): Read<Eff> => {
+  if (!isNode(expression)) return refuse({ _tag: "node", type: typeof expression, where: "expression" })
+  const fragment = exprOf(expression)
   if (failed(fragment)) return again(fragment)
-  const eff = readEff(0, fragment.success)
-  if (failed(eff)) return again(eff)
-  // The reader mints nodes by construction; the decode is the receipt that they are the schema's.
-  return ok(decodeEff(eff.success))
+  return readEff(0, fragment.success)
 }
 
 export const showRefusal = (r: Refusal): string => {
@@ -84,12 +96,28 @@ const again = (f: Result.Failure<unknown, Refusal>): Result.Result<never, Refusa
 // derives what it needs from the row (`printRow` in Print.lean: a value row is the bare
 // spelling, a call row on a `unit` request prints the trailing names alone).
 
-/** The entry a (spelling, trailing names) pair names: `nativeSpell` of `Read.lean`. */
-const spell = (spelling: string, trailing: ReadonlyArray<string>): Entry | undefined =>
-  rows.find((e) =>
+/** The supplied table's rows as entries: the operation of the row at position `i` is
+ * `NativeOp.external i` (`Read.lean` `nativeSpell`: an external index is the row's position,
+ * never parsed out of an identifier). Bound for the duration of one entry-point call. */
+let supplied: ReadonlyArray<Entry> = []
+export const withTable = <A>(table: ReadonlyArray<Row>, body: () => A): A => {
+  const saved = supplied
+  supplied = table.map((row, index): Entry => ({ op: { _tag: "external", index }, row }))
+  try {
+    return body()
+  } finally {
+    supplied = saved
+  }
+}
+
+/** The entry a (spelling, trailing names) pair names: `nativeSpell` of `Read.lean`, the
+ * built-in rows first and then the supplied table. */
+const spell = (spelling: string, trailing: ReadonlyArray<string>): Entry | undefined => {
+  const named = (e: Entry): boolean =>
     e.row.spelling === spelling && e.row.trailing.length === trailing.length &&
     e.row.trailing.every((name, i) => name === trailing[i])
-  )
+  return rows.find(named) ?? supplied.find(named)
+}
 
 const isValueRow = (e: Entry): boolean => e.row.shape === "value"
 const unitRequest = (e: Entry): boolean => e.row.request._tag === "unit"
@@ -104,12 +132,19 @@ const unitRequest = (e: Entry): boolean => e.row.request._tag === "unit"
 // here: a dotted head such as `Effect.flatMap` arrives as a member chain of identifiers, and
 // oxc-parser keeps parentheses as `ParenthesizedExpression` nodes.
 
-type Expr =
+export type Expr =
   | { readonly _tag: "ident"; readonly name: string }
   | { readonly _tag: "str"; readonly value: string }
   | { readonly _tag: "int"; readonly value: number }
   | { readonly _tag: "bool"; readonly value: boolean }
   | { readonly _tag: "call"; readonly fn: Expr; readonly args: ReadonlyArray<Expr> }
+  /** `head<T1, …>` as the callee of a call: lean4-typescript's `Expr.generic`, the type
+   * arguments as the spellings the printer writes (`E4-CHECK-CE-013`). */
+  | { readonly _tag: "generic"; readonly fn: Expr; readonly typeArgs: ReadonlyArray<string> }
+  | { readonly _tag: "method"; readonly base: Expr; readonly name: string; readonly args: ReadonlyArray<Expr> }
+  /** `receiver.name` on its own: lean4-typescript's `Expr.member`, which the printer emits only
+   * as the callee of a typed method call `receiver.name<T>(args)` (`Print.lean` `printMethod`). */
+  | { readonly _tag: "member"; readonly base: Expr; readonly name: string }
   | { readonly _tag: "object"; readonly fields: ReadonlyArray<readonly [string, Expr]> }
   | { readonly _tag: "arr"; readonly items: ReadonlyArray<Expr> }
   /** `() => body` */
@@ -122,10 +157,11 @@ type Expr =
   /** `(a) => { body }` */
   | { readonly _tag: "arrowBlock"; readonly params: ReadonlyArray<string>; readonly body: ReadonlyArray<TsStmt> }
 
-type TsStmt =
+export type TsStmt =
   /** `const name = yield* value` */
   | { readonly _tag: "constYield"; readonly name: string; readonly value: Expr }
   | { readonly _tag: "ret"; readonly value: Expr }
+  | { readonly _tag: "exprStmt"; readonly value: Expr }
   /** `yield* value` */
   | { readonly _tag: "yieldDiscard"; readonly value: Expr }
   /** `let name = value` */
@@ -157,6 +193,47 @@ const listAt = (n: Node, key: string): ReadonlyArray<unknown> | undefined => {
 }
 
 const unsupported = (n: Node, where: string) => refuse({ _tag: "node", type: n.type, where })
+
+/** The qualified type names used by native service carriers. */
+const qualifiedTypeName = (n: Node): string | undefined => {
+  if (n.type === "Identifier" && typeof n.name === "string") return n.name
+  if (n.type !== "TSQualifiedName") return undefined
+  const left = nodeAt(n, "left")
+  const right = nodeAt(n, "right")
+  if (!left || right?.type !== "Identifier" || typeof right.name !== "string") return undefined
+  const prefix = qualifiedTypeName(left)
+  return prefix === undefined ? undefined : `${prefix}.${right.name}`
+}
+
+/** A type argument's spelling: the keywords and bare type names the printer writes
+ * (`Expr.generic` in `src/Effect4/Codegen/Print.lean`, `Deferred.make<number, number>()`);
+ * anything else is outside the printer's image. */
+const typeName = (t: Node): string | undefined => {
+  switch (t.type) {
+    case "TSNumberKeyword": return "number"
+    case "TSStringKeyword": return "string"
+    case "TSBooleanKeyword": return "boolean"
+    case "TSUnknownKeyword": return "unknown"
+    case "TSNeverKeyword": return "never"
+    case "TSVoidKeyword": return "void"
+    case "TSTypeReference": {
+      const ref = nodeAt(t, "typeName")
+      if (!ref) return undefined
+      const name = qualifiedTypeName(ref)
+      if (name === undefined) return undefined
+      const typeArgs = nodeAt(t, "typeArguments")
+      if (!typeArgs) return name
+      const rendered: string[] = []
+      for (const arg of listAt(typeArgs, "params") ?? []) {
+        const text = isNode(arg) ? typeName(arg) : undefined
+        if (text === undefined) return undefined
+        rendered.push(text)
+      }
+      return `${name}<${rendered.join(", ")}>`
+    }
+    default: return undefined
+  }
+}
 
 const unwrap = (n: Node): Node => {
   if (n.type === "ParenthesizedExpression") {
@@ -194,12 +271,43 @@ const paramNames = (n: Node): ReadonlyArray<string> | undefined => {
 const yieldStar = (n: Node): Node | undefined =>
   n.type === "YieldExpression" && n.delegate === true ? nodeAt(n, "argument") : undefined
 
-const exprOf = (raw: Node): Read<Expr> => {
+/** A binder of the printed image, `a0`, `a1`, … (`Var.name`). No head or row spelling begins
+ * with `a` (`rowNamesSafe`, Read.lean), so a member chain rooted at a binder is a receiver and
+ * never a dotted head. */
+const isBinderName = (s: string): boolean => /^a(0|[1-9][0-9]*)$/.test(s)
+
+/** The root identifier of a member chain; `undefined` when the chain bottoms out elsewhere. */
+const rootName = (n: Node): string | undefined => {
+  if (n.type === "Identifier") return typeof n.name === "string" ? n.name : undefined
+  if (n.type === "MemberExpression") {
+    const object = nodeAt(n, "object")
+    return object ? rootName(unwrap(object)) : undefined
+  }
+  return undefined
+}
+
+/** `receiver.name`: a plain member whose object is a receiver term (a chain rooted at a binder,
+ * or an expression that is no identifier chain at all), as opposed to a dotted head such as
+ * `Effect.succeed` or `Host.acquire`, which `dotted` reads as one identifier. */
+const receiverMember = (n: Node): { readonly object: Node; readonly name: string } | undefined => {
+  if (n.type !== "MemberExpression" || n.computed === true || n.optional === true) return undefined
+  const object = nodeAt(n, "object")
+  const property = nodeAt(n, "property")
+  if (!object || !property || property.type !== "Identifier" || typeof property.name !== "string") return undefined
+  const inner = unwrap(object)
+  const root = rootName(inner)
+  if (root !== undefined && !isBinderName(root)) return undefined
+  return { object: inner, name: property.name }
+}
+
+export const exprOf = (raw: Node): Read<Expr> => {
   const n = unwrap(raw)
   switch (n.type) {
     case "Identifier":
       return typeof n.name === "string" ? ok({ _tag: "ident", name: n.name }) : unsupported(n, "identifier")
     case "MemberExpression": {
+      const receiver = receiverMember(n)
+      if (receiver) return Result.map(exprOf(receiver.object), (base): Expr => ({ _tag: "member", base, name: receiver.name }))
       const name = dotted(n)
       return name === undefined ? unsupported(n, "member") : ok({ _tag: "ident", name })
     }
@@ -215,14 +323,45 @@ const exprOf = (raw: Node): Read<Expr> => {
       return unsupported(n, "literal")
     }
     case "CallExpression": {
-      if (n.optional === true || n.typeArguments) return unsupported(n, "call")
+      if (n.optional === true) return unsupported(n, "call")
       const callee = nodeAt(n, "callee")
       if (!callee) return unsupported(n, "callee")
-      const fn = exprOf(callee)
+      // The layer printer's only method form is a single `.pipe(Layer.provide...)`.
+      if (callee.type === "MemberExpression" && callee.computed !== true && callee.optional !== true) {
+        const property = nodeAt(callee, "property")
+        const object = nodeAt(callee, "object")
+        if (property?.type === "Identifier" && property.name === "pipe" && object) {
+          if (n.typeArguments) return unsupported(n, "method typeArguments")
+          const base = exprOf(object)
+          if (failed(base)) return again(base)
+          const args = exprsOf(listAt(n, "arguments") ?? [], "argument")
+          if (failed(args)) return again(args)
+          return ok({ _tag: "method", base: base.success, name: "pipe", args: args.success })
+        }
+      }
+      // `receiver.spelling(args)` is a method call on a receiver term (`printMethod`); with
+      // type arguments the callee is `generic` over a `member`, as the printer spells it.
+      const receiver = receiverMember(callee)
+      const fn: Read<Expr> = receiver
+        ? Result.map(exprOf(receiver.object), (base): Expr => ({ _tag: "member", base, name: receiver.name }))
+        : exprOf(callee)
       if (failed(fn)) return again(fn)
       const args = exprsOf(listAt(n, "arguments") ?? [], "argument")
       if (failed(args)) return again(args)
-      return ok({ _tag: "call", fn: fn.success, args: args.success })
+      // `head<T1, …>(args)`: the type arguments become the callee's `generic` spellings.
+      const targs = nodeAt(n, "typeArguments")
+      if (!targs) {
+        return fn.success._tag === "member"
+          ? ok({ _tag: "method", base: fn.success.base, name: fn.success.name, args: args.success })
+          : ok({ _tag: "call", fn: fn.success, args: args.success })
+      }
+      const names: string[] = []
+      for (const p of listAt(targs, "params") ?? []) {
+        const name = isNode(p) ? typeName(p) : undefined
+        if (name === undefined) return unsupported(n, "typeArgument")
+        names.push(name)
+      }
+      return ok({ _tag: "call", fn: { _tag: "generic", fn: fn.success, typeArgs: names }, args: args.success })
     }
     case "ArrowFunctionExpression": {
       if (n.async === true || n.typeParameters || n.returnType) return unsupported(n, "arrow")
@@ -290,12 +429,13 @@ const exprOf = (raw: Node): Read<Expr> => {
   }
 }
 
-const exprsOf = (items: ReadonlyArray<unknown>, where: string): Read<ReadonlyArray<Expr>> => {
+const exprsOf = (items: ReadonlyArray<unknown>, where: string,
+  read: (node: Node, index: number) => Read<Expr> = exprOf): Read<ReadonlyArray<Expr>> => {
   const out: Expr[] = []
-  for (const item of items) {
+  for (const [i, item] of items.entries()) {
     if (!isNode(item)) return refuse({ _tag: "node", type: item === null ? "hole" : typeof item, where })
     if (item.type === "SpreadElement") return unsupported(item, where)
-    const e = exprOf(item)
+    const e = read(item, i)
     if (failed(e)) return again(e)
     out.push(e.success)
   }
@@ -343,7 +483,7 @@ const stmtOf = (n: Node): Read<TsStmt> => {
         if (failed(v)) return again(v)
         return ok({ _tag: "assign", name: left.name, value: v.success })
       }
-      return unsupported(inner, "statement expression")
+      return Result.map(exprOf(inner), (value): TsStmt => ({ _tag: "exprStmt", value }))
     }
     case "ReturnStatement": {
       const argument = nodeAt(n, "argument")
@@ -393,27 +533,54 @@ const stmtsOf = (items: ReadonlyArray<unknown>): Read<ReadonlyArray<TsStmt>> => 
   return ok(out)
 }
 
+/** A file's leading declarations and the one program it ends with. */
+interface Module {
+  /** The `const L_<path> = <layer>` declarations before the last statement, in file order. */
+  readonly declarations: ReadonlyArray<Declaration>
+  /** The last statement's expression: the program itself. */
+  readonly main: Node
+}
+
+interface Declaration {
+  readonly name: string
+  readonly value: Node
+}
+
+/** `const name = value` or `export const name = value`, one declarator, any declared type. */
+const constDeclOf = (s: Node): Declaration | undefined => {
+  const decl = s.type === "ExportNamedDeclaration" ? nodeAt(s, "declaration") : s
+  if (!decl || decl.type !== "VariableDeclaration" || decl.kind !== "const") return undefined
+  const decls = listAt(decl, "declarations")
+  const d = decls && decls.length === 1 ? decls[0] : undefined
+  if (!isNode(d)) return undefined
+  const id = nodeAt(d, "id")
+  const init = nodeAt(d, "init")
+  if (!id || id.type !== "Identifier" || typeof id.name !== "string" || !init) return undefined
+  return { name: id.name, value: init }
+}
+
 /**
- * The one expression a program file holds: a bare expression statement (the generated
- * corpus), or `export const name = expression` with any declared type (the truth files).
- * Imports are skipped; anything else is not one program.
+ * What a program file holds: any number of `const name = expression` declarations — the
+ * layers `printModule` hoists — and then the program, as a bare expression statement (the
+ * generated corpus) or as `export const name = expression` with any declared type (the truth
+ * files). Imports are skipped; anything else before the last statement is not one program.
  */
-const programExprOf = (program: Node): Read<Node> => {
-  const body = (listAt(program, "body") ?? []).filter((s) => isNode(s) && s.type !== "ImportDeclaration")
-  if (body.length !== 1 || !isNode(body[0])) return refuse({ _tag: "program", what: `${body.length} statements after imports` })
-  const s = body[0]
-  if (s.type === "ExpressionStatement") {
-    const e = nodeAt(s, "expression")
-    return e ? ok(e) : refuse({ _tag: "program", what: "empty expression statement" })
+const programModuleOf = (program: Node): Read<Module> => {
+  const body = (listAt(program, "body") ?? []).filter((s): s is Node => isNode(s) && s.type !== "ImportDeclaration")
+  const last = body[body.length - 1]
+  if (last === undefined) return refuse({ _tag: "program", what: "0 statements after imports" })
+  const declarations: Declaration[] = []
+  for (const s of body.slice(0, -1)) {
+    const d = constDeclOf(s)
+    if (d === undefined) return refuse({ _tag: "program", what: `${s.type} where a const declaration was expected` })
+    declarations.push(d)
   }
-  if (s.type === "ExportNamedDeclaration") {
-    const decl = nodeAt(s, "declaration")
-    const decls = decl && decl.type === "VariableDeclaration" && decl.kind === "const" ? listAt(decl, "declarations") : undefined
-    const d = decls && decls.length === 1 ? decls[0] : undefined
-    const init = isNode(d) ? nodeAt(d, "init") : undefined
-    return init ? ok(init) : refuse({ _tag: "program", what: "export that is not one const with an initializer" })
+  if (last.type === "ExpressionStatement") {
+    const e = nodeAt(last, "expression")
+    return e ? ok({ declarations, main: e }) : refuse({ _tag: "program", what: "empty expression statement" })
   }
-  return refuse({ _tag: "program", what: s.type })
+  const main = constDeclOf(last)
+  return main ? ok({ declarations, main: main.value }) : refuse({ _tag: "program", what: last.type })
 }
 
 /* ============================================================ § 3  the fragment → Eff  (Read.lean) */
@@ -495,7 +662,10 @@ const readCause = (n: number, x: Expr): Read<CauseTerm> => {
 /**
  * `{ startImmediately: b, uninterruptible: true | false | "inherit" }` back into fork
  * options. The object carries no `daemon` field: `Effect.forkChild` against
- * `Effect.forkDetach` decides it for a plain fork, and the scoped forks read it as `false`.
+ * `Effect.forkDetach` decides it for a plain fork, and the scoped forks (`Effect.forkIn`,
+ * `Effect.forkScoped`) are daemon forks in rc.112 (`internal/effect.ts:5366` passes `true`
+ * to `forkUnsafe`; `:5406` routes `forkScoped` through `forkIn`), as the Lean reader reads
+ * them (`src/Effect4/Codegen/Read.lean`, `E4-CHECK-CE-015`).
  */
 const readForkOptions = (daemon: boolean, x: Expr): Read<ForkOptions> => {
   const shape = refuse({ _tag: "shape", what: "forkOptions" })
@@ -535,26 +705,227 @@ const readRowValue = (s: string): Read<Eff> => {
 }
 
 /**
+ * The saved variable whose two components a tuple-call row receives, when its two
+ * arguments are exactly `fst(a)` and `snd(a)` of one identifier `a` (Lean `savedVar?`).
+ */
+const savedVar = (x: Expr, y: Expr): string | undefined => {
+  if (x._tag !== "call" || x.fn._tag !== "ident" || x.fn.name !== "fst" || x.args.length !== 1) return undefined
+  if (y._tag !== "call" || y.fn._tag !== "ident" || y.fn.name !== "snd" || y.args.length !== 1) return undefined
+  const [v] = x.args
+  const [w] = y.args
+  if (v?._tag !== "ident" || w?._tag !== "ident" || v.name !== w.name) return undefined
+  return v.name
+}
+
+/**
+ * The request of a tuple-call row from its two arguments: the components of one saved
+ * variable read back as that variable, any other two terms as their `pair` application
+ * (Lean `readTupleArgs`).
+ */
+const readTupleArgs = (n: number, x: Expr, y: Expr): Read<Term> => {
+  const v = savedVar(x, y)
+  if (v !== undefined) return readTerm(n, { _tag: "ident", name: v })
+  const a = readTerm(n, x)
+  if (failed(a)) return again(a)
+  const b = readTerm(n, y)
+  if (failed(b)) return again(b)
+  return ok({ _tag: "app", atom: "pair", args: [a.success, b.success] })
+}
+
+/**
  * A call as a call row; `undefined` when no row of the table has this head and argument
  * shape, so the caller may read an atom application instead. A call row's argument list is
  * the trailing names alone on a `unit` request, and the request followed by the trailing
- * names otherwise; both readings are tried, and the table lets at most one succeed.
+ * names otherwise; a tuple-call row's is its two request arguments followed by the trailing
+ * names. The three readings are tried in that order, and the table lets at most one succeed
+ * (Lean `readRowCall`).
  */
-const readRowCall = (n: number, s: string, args: ReadonlyArray<Expr>): Read<Eff> | undefined => {
+const readRowCall = (
+  n: number, s: string, typeArgs: ReadonlyArray<string>, args: ReadonlyArray<Expr>,
+  view: (e: Entry) => Entry = (e) => e,
+): Read<Eff> | undefined => {
+  // The call's type arguments must be exactly the ones the row declares: a row that needs
+  // them refuses a bare call, and a row that declares none refuses a call that carries any
+  // (`E4-CHECK-CE-013`).
+  const typed = (e: Entry): boolean =>
+    e.row.typeArgs.length === typeArgs.length && e.row.typeArgs.every((a, i) => a === typeArgs[i])
+  // `view` is the identity for a call, and the method-argument view of the row for a method
+  // call (`methodSignature` of Read.lean): the row identity is the spelled entry either way.
+  const find = (names: ReadonlyArray<string>): Entry | undefined => {
+    const e = spell(s, names)
+    return e === undefined ? undefined : view(e)
+  }
   const all = namesOf(args)
-  const asTrailing = all ? spell(s, all) : undefined
-  if (asTrailing) return !isValueRow(asTrailing) && unitRequest(asTrailing) ? ok(rowAnswer(asTrailing, unit)) : refuse({ _tag: "arity", head: s })
+  const asTrailing = all ? find(all) : undefined
+  if (asTrailing) return asTrailing.row.shape === "call" && unitRequest(asTrailing) && typed(asTrailing) ? ok(rowAnswer(asTrailing, unit)) : refuse({ _tag: "arity", head: s })
   const [request, ...rest] = args
   if (request === undefined) return undefined
   const restNames = namesOf(rest)
-  const withRequest = restNames ? spell(s, restNames) : undefined
-  if (!withRequest) return undefined
-  return !isValueRow(withRequest) && !unitRequest(withRequest)
-    ? Result.map(readTerm(n, request), (t) => rowAnswer(withRequest, t))
+  const withRequest = restNames ? find(restNames) : undefined
+  if (withRequest) {
+    return withRequest.row.shape === "call" && !unitRequest(withRequest) && typed(withRequest)
+      ? Result.map(readTerm(n, request), (t) => rowAnswer(withRequest, t))
+      : refuse({ _tag: "arity", head: s })
+  }
+  const [second, ...names] = rest
+  if (second === undefined) return undefined
+  const tupleNames = namesOf(names)
+  const asTuple = tupleNames ? find(tupleNames) : undefined
+  if (!asTuple) return undefined
+  return asTuple.row.shape === "tupleCall" && typed(asTuple)
+    ? Result.map(readTupleArgs(n, request, second), (t) => rowAnswer(asTuple, t))
     : refuse({ _tag: "arity", head: s })
 }
 
-const readEff = (n: number, x: Expr): Read<Eff> => {
+/** The ordinary call view of a method row's arguments (`Print.lean` `methodArgsRow`): the
+ * request is the second component of the declared `prod` (`never` otherwise) and the shape
+ * is `tupleCall` when that component is itself a `prod`, `call` otherwise. */
+const methodArgsRow = (e: Entry): Entry => {
+  const request: Ty = e.row.request._tag === "prod" ? e.row.request.right : { _tag: "never" }
+  return { ...e, row: { ...e.row, request, shape: request._tag === "prod" ? "tupleCall" : "call" } }
+}
+
+/**
+ * `receiver.spelling(args)` and `receiver.spelling<T>(args)`, the two shapes the printer emits
+ * for a `method` row (Lean `readRowMethod`, `addReceiver`): the receiver reads as a term, the
+ * arguments by the ordinary call readings under the method view, and the request is
+ * `pair(receiver, args)`. A row of any other shape spelled with a receiver is refused.
+ */
+const readRowMethod = (n: number, receiver: Expr, s: string, typeArgs: ReadonlyArray<string>, args: ReadonlyArray<Expr>): Read<Eff> => {
+  const recv = readTerm(n, receiver)
+  if (failed(recv)) return again(recv)
+  let spelled: Entry | undefined
+  const body = readRowCall(n, s, typeArgs, args, (e) => {
+    spelled = e
+    return methodArgsRow(e)
+  })
+  if (body === undefined) return refuse({ _tag: "unknownHead", name: s })
+  if (failed(body)) return again(body)
+  const eff = body.success
+  if (spelled === undefined || spelled.row.shape !== "method" || (eff._tag !== "perform" && eff._tag !== "callback")) {
+    return refuse({ _tag: "shape", what: "method row" })
+  }
+  return ok(rowAnswer(spelled, { _tag: "app", atom: "pair", args: [recv.success, eff.request] }))
+}
+
+/** `nativeServiceTy` of Program/Native.lean:273-283, including the reserved Scope key. */
+const serviceType = (name: number, service: number): string | undefined => {
+  if (name === 0 && service === 0) return "Scope.Scope"
+  if (name < 4) return undefined
+  switch (service) {
+    case 4: return "number"
+    case 5: return "boolean"
+    case 6: return "void"
+    case 7: return "Ref.Ref<number>"
+    case 8: return "SqlClient.SqlClient"
+    case 9: return "KeyValueStore.KeyValueStore"
+    default: return undefined
+  }
+}
+
+/** The exact numeric spelling and type argument of Lean's `printKey`. */
+const readKey = (x: Expr): Read<ServiceKey> => {
+  const bad = () => refuse({ _tag: "shape", what: "service key" })
+  if (x._tag !== "call" || x.args.length !== 1 || x.args[0]?._tag !== "str") return bad()
+  const fields = /^k(0|[1-9][0-9]*)_(0|[1-9][0-9]*)$/.exec(x.args[0].value)
+  if (!fields) return bad()
+  const name = Number(fields[1])
+  const service = Number(fields[2])
+  if (!Number.isSafeInteger(name) || !Number.isSafeInteger(service)) return bad()
+  const ty = serviceType(name, service)
+  if (ty === undefined) {
+    if (x.fn._tag !== "ident" || x.fn.name !== "Context.Service") return bad()
+  } else {
+    if (x.fn._tag !== "generic" || x.fn.fn._tag !== "ident" || x.fn.fn.name !== "Context.Service" ||
+      x.fn.typeArgs.length !== 1 || x.fn.typeArgs[0] !== ty) return bad()
+  }
+  return ok({ name: { value: name }, service: { value: service } })
+}
+
+const readLiteral = (x: Expr): Read<Lit> => {
+  const term = readTerm(0, x)
+  if (failed(term)) return again(term)
+  return term.success._tag === "lit" ? ok(term.success.value) : refuse({ _tag: "shape", what: "literal" })
+}
+
+/**
+ * The ten printed Layer forms; every effect body starts at environment length zero. A bare
+ * identifier is a reference to the path its name carries (§ 4, `LayerTerm.readRefName` of
+ * `src/Effect4/Program/Refs.lean`), admitted only when the name is exactly that path's
+ * spelling, so what is read is what `printLayer` prints: `L_01` and `L_1_` are refused.
+ */
+export const readLayer = (x: Expr): Read<LayerTerm> => {
+  const bad = () => refuse({ _tag: "shape", what: "layer" })
+  if (x._tag === "ident") {
+    const target = readRefName(x.name)
+    return target !== undefined && refName(target) === x.name ? ok({ _tag: "ref", target }) : bad()
+  }
+  if (x._tag === "method") {
+    const segment = x.args[0]
+    if (x.name !== "pipe" || x.args.length !== 1 || segment?._tag !== "call" ||
+      segment.fn._tag !== "ident" || segment.args.length !== 1 ||
+      (segment.fn.name !== "Layer.provide" && segment.fn.name !== "Layer.provideMerge")) return bad()
+    const self = readLayer(x.base)
+    if (failed(self)) return again(self)
+    const that = readLayer(segment.args[0]!)
+    if (failed(that)) return again(that)
+    return ok({ _tag: segment.fn.name === "Layer.provide" ? "provide" : "provideMerge",
+      self: self.success, that: that.success })
+  }
+  if (x._tag !== "call" || x.fn._tag !== "ident") return bad()
+  const [first, second] = x.args
+  switch (x.fn.name) {
+    case "Layer.succeed": {
+      if (x.args.length !== 2 || first === undefined || second === undefined) return bad()
+      const key = readKey(first)
+      if (failed(key)) return again(key)
+      const value = readLiteral(second)
+      return failed(value) ? again(value) : ok({ _tag: "succeed", key: key.success, value: value.success })
+    }
+    case "Layer.effect": {
+      if (x.args.length !== 2 || first === undefined || second === undefined) return bad()
+      const key = readKey(first)
+      if (failed(key)) return again(key)
+      const body = readEff(0, second)
+      return failed(body) ? again(body) : ok({ _tag: "effect", key: key.success, body: body.success })
+    }
+    case "Layer.effectDiscard": {
+      if (x.args.length !== 1 || first === undefined) return bad()
+      return Result.map(readEff(0, first), (body): LayerTerm => ({ _tag: "effectDiscard", body }))
+    }
+    case "Layer.merge": {
+      if (x.args.length !== 2 || first === undefined || second === undefined) return bad()
+      const left = readLayer(first)
+      if (failed(left)) return again(left)
+      const right = readLayer(second)
+      return failed(right) ? again(right) : ok({ _tag: "merge", left: left.success, right: right.success })
+    }
+    // the n-ary merge takes any number of layers, none included; `Layer.merge` and
+    // `Layer.mergeAll` build different scope trees and are never read as each other
+    case "Layer.mergeAll":
+      return Result.map(readLayers(x.args), (layers): LayerTerm => ({ _tag: "mergeAll", layers }))
+    case "Layer.fresh":
+    case "Layer.orDie": {
+      if (x.args.length !== 1 || first === undefined) return bad()
+      const inner = readLayer(first)
+      return failed(inner) ? again(inner) : ok({ _tag: x.fn.name === "Layer.fresh" ? "fresh" : "orDie", inner: inner.success })
+    }
+    default: return bad()
+  }
+}
+
+/** The layers of a `mergeAll`, in order, each closed. */
+const readLayers = (xs: ReadonlyArray<Expr>): Read<ReadonlyArray<LayerTerm>> => {
+  const out: LayerTerm[] = []
+  for (const x of xs) {
+    const l = readLayer(x)
+    if (failed(l)) return again(l)
+    out.push(l.success)
+  }
+  return ok(out)
+}
+
+export const readEff = (n: number, x: Expr): Read<Eff> => {
   switch (x._tag) {
     case "ident": {
       const i = varRead(n, x.name)
@@ -574,14 +945,30 @@ const readEff = (n: number, x: Expr): Read<Eff> => {
     case "str":
       return ok({ _tag: "yieldError", error: { _tag: "lit", value: { _tag: "str", value: x.value } } })
     case "call": {
+      // A call carrying explicit type arguments is a row call and nothing else: no reserved
+      // head and no atom application is printed with them, and an empty list is not a
+      // spelling the printer emits (Lean `readEff`, `E4-CHECK-CE-013`).
+      if (x.fn._tag === "generic") {
+        if (x.fn.typeArgs.length === 0) return refuse({ _tag: "shape", what: "expression" })
+        // `receiver.spelling<T>(args)`: a typed method call (Lean `readMethod`).
+        if (x.fn.fn._tag === "member") return readRowMethod(n, x.fn.fn.base, x.fn.fn.name, x.fn.typeArgs, x.args)
+        if (x.fn.fn._tag !== "ident") return refuse({ _tag: "shape", what: "expression" })
+        const s = x.fn.fn.name
+        const asRow = readRowCall(n, s, x.fn.typeArgs, x.args)
+        return asRow !== undefined ? asRow : refuse({ _tag: "unknownHead", name: s })
+      }
       if (x.fn._tag !== "ident") return refuse({ _tag: "shape", what: "expression" })
       const s = x.fn.name
       const head = headOf(s)
       if (head !== undefined) return headReaders[head](n, x.args)
-      const asRow = readRowCall(n, s, x.args)
+      const asRow = readRowCall(n, s, [], x.args)
       if (asRow !== undefined) return asRow
       return Result.map(readTerms(n, x.args), (args): Eff => ({ _tag: "yieldError", error: { _tag: "app", atom: s, args } }))
     }
+    // `receiver.spelling(args)`: a method row (Lean `readMethod`, reached from `readEff`'s
+    // catch-all); a `pipe` in effect position falls through this to `unknownHead`, as in Lean.
+    case "method":
+      return readRowMethod(n, x.base, x.name, [], x.args)
     default:
       return refuse({ _tag: "shape", what: "expression" })
   }
@@ -742,12 +1129,27 @@ const readForkIn: HeadReader = (n, args) => {
   if (failed(p)) return again(p)
   const s = readTerm(n, args[1]!)
   if (failed(s)) return again(s)
-  const o = readForkOptions(false, args[2]!)
+  const o = readForkOptions(true, args[2]!)
   if (failed(o)) return again(o)
   return ok(withFiber({ _tag: "forkIn", program: p.success, options: o.success, scope: s.success }))
 }
-const readForkScoped: HeadReader = fork("Effect.forkScoped", false, (program, options) => ({ _tag: "forkScoped", program, options }))
-const readRunIn: HeadReader = terms2("Fiber.runIn", (target, scope) => withFiber({ _tag: "runIn", target, scope }))
+const readForkScoped: HeadReader = fork("Effect.forkScoped", true, (program, options) => ({ _tag: "forkScoped", program, options }))
+/** The callback binds nothing and contains exactly one synchronous link, then Effect.void. */
+const readRunIn: HeadReader = (n, args) => {
+  const shape = refuse({ _tag: "shape", what: "runIn" })
+  const [callback] = args
+  if (args.length !== 1 || callback?._tag !== "arrowBlock" || callback.params.length !== 0 ||
+      callback.body.length !== 2) return shape
+  const [link, done] = callback.body
+  if (link?._tag !== "exprStmt" || link.value._tag !== "call" || link.value.fn._tag !== "ident" ||
+      link.value.fn.name !== "Fiber.runIn" || link.value.args.length !== 2 || done?._tag !== "ret" ||
+      done.value._tag !== "ident" || done.value.name !== "Effect.void") return shape
+  const target = readTerm(n, link.value.args[0]!)
+  if (failed(target)) return again(target)
+  const scope = readTerm(n, link.value.args[1]!)
+  if (failed(scope)) return again(scope)
+  return ok(withFiber({ _tag: "runIn", target: target.success, scope: scope.success }))
+}
 const readInterrupt: HeadReader = term("Fiber.interrupt", (target) => withFiber({ _tag: "interrupt", target }))
 const readInterruptAll: HeadReader = term("Fiber.interruptAll", (targets) => withFiber({ _tag: "interruptAll", targets, interruptor: null }))
 const readInterruptAllAs: HeadReader = terms2("Fiber.interruptAllAs", (targets, who) => withFiber({ _tag: "interruptAll", targets, interruptor: who }))
@@ -775,6 +1177,34 @@ const readAcquireRelease: HeadReader = (n, args) => {
   return ok({ _tag: "acquireRelease", acquire: a.success, release: r.success })
 }
 
+const readProvide: HeadReader = (n, args) => {
+  const [body, layer, options] = args
+  if (body === undefined || layer === undefined || (args.length !== 2 && args.length !== 3)) return arity("Effect.provide")
+  const isLocal = args.length === 3
+  if (isLocal) {
+    if (options?._tag !== "object" || options.fields.length !== 1 ||
+      options.fields[0]?.[1]._tag !== "bool" || options.fields[0][1].value !== true) return arity("Effect.provide")
+    if (options.fields[0][0] !== "local") return refuse({ _tag: "shape", what: "provide options" })
+  }
+  const b = readEff(n, body)
+  if (failed(b)) return again(b)
+  const l = readLayer(layer)
+  return failed(l) ? again(l) : ok({ _tag: "provideLayer", layer: l.success, isLocal, body: b.success })
+}
+
+const readService: HeadReader = (_n, args) =>
+  args.length === 1 ? Result.map(readKey(args[0]!), (key): Eff => ({ _tag: "service", key })) : arity("Effect.service")
+
+const readProvideService: HeadReader = (n, args) => {
+  if (args.length !== 3) return arity("Effect.provideService")
+  const body = readEff(n, args[0]!)
+  if (failed(body)) return again(body)
+  const key = readKey(args[1]!)
+  if (failed(key)) return again(key)
+  const value = readTerm(n, args[2]!)
+  return failed(value) ? again(value) : ok({ _tag: "provideService", key: key.success, value: value.success, body: body.success })
+}
+
 /** One reader per reserved head. The keys are the generated `Head` type, so a head added to
  * the profile without a reader here is a compile error. */
 const headReaders: Record<Head, HeadReader> = {
@@ -799,7 +1229,7 @@ const headReaders: Record<Head, HeadReader> = {
   "Effect.forkDetach": readForkDetach,
   "Effect.forkIn": readForkIn,
   "Effect.forkScoped": readForkScoped,
-  "Fiber.runIn": readRunIn,
+  "Fiber.runIn": () => arity("Fiber.runIn"),
   "Fiber.interrupt": readInterrupt,
   "Fiber.interruptAll": readInterruptAll,
   "Fiber.interruptAllAs": readInterruptAllAs,
@@ -815,6 +1245,21 @@ const headReaders: Record<Head, HeadReader> = {
   "Cause.interrupt": notHere("Cause.interrupt"),
   "Cause.combine": notHere("Cause.combine"),
   "undefined": notHere("undefined"),
+  "Effect.withFiber": readRunIn,
+  // Keys and layers are read only in their dedicated argument positions, as in Read.lean
+  "Context.Service": notHere("Context.Service"),
+  "Effect.provide": readProvide,
+  "Effect.service": readService,
+  "Effect.provideService": readProvideService,
+  "Layer.succeed": notHere("Layer.succeed"),
+  "Layer.effect": notHere("Layer.effect"),
+  "Layer.effectDiscard": notHere("Layer.effectDiscard"),
+  "Layer.provide": notHere("Layer.provide"),
+  "Layer.provideMerge": notHere("Layer.provideMerge"),
+  "Layer.merge": notHere("Layer.merge"),
+  "Layer.fresh": notHere("Layer.fresh"),
+  "Layer.orDie": notHere("Layer.orDie"),
+  "Layer.mergeAll": notHere("Layer.mergeAll"),
 }
 
 /** A generator body, statement by statement, with the binder counts of the printer. */
@@ -878,4 +1323,237 @@ const readEffs = (n: number, items: ReadonlyArray<Expr>): Read<ReadonlyArray<Eff
     out.push(e.success)
   }
   return ok(out)
+}
+
+/* ============================================================ § 4  the declaration block  (Refs.lean) */
+
+// A layer's identity is its path: the child indices from the root, in the one scheme
+// `Node.child` of `src/Effect4/Program/Refs.lean` fixes. `printModule` hoists every
+// referenced target into `const L_<path> = …`, so the defining site and every reference
+// print as that one identifier; § 3 reads each of them as `LayerTerm.ref <path>`, and this
+// section puts the declarations back at their paths (`readModule`, `Eff.restoreAll`), which
+// leaves the defining site the layer itself and every later site a reference to it.
+
+/** The declared name of a target: `L_` then its indices joined by `_` (`LayerTerm.refName`). */
+const refName = (target: ReadonlyArray<number>): string => `L_${target.join("_")}`
+
+/**
+ * The path a declared name carries: `L_` then decimal groups separated by `_`, each group at
+ * least one digit (`LayerTerm.readRefName`, read off the bytes there). An empty group —
+ * `L_`, `L_1_`, `L_1__0` — is refused here; a group that decodes but does not spell itself
+ * back — `L_01` — is refused by the caller's `refName` check, which is where Lean's reader
+ * refuses it too.
+ */
+const readRefName = (s: string): ReadonlyArray<number> | undefined => {
+  if (s.length < 3 || s.charCodeAt(0) !== 76 /* L */ || s.charCodeAt(1) !== 95 /* _ */) return undefined
+  const groups: number[] = []
+  let value = 0
+  let seen = false
+  for (let i = 2; i < s.length; i++) {
+    const b = s.charCodeAt(i)
+    if (b === 95) {
+      if (!seen) return undefined
+      groups.push(value)
+      value = 0
+      seen = false
+    } else if (b >= 48 && b <= 57) {
+      value = value * 10 + (b - 48)
+      seen = true
+    } else return undefined
+  }
+  if (!seen) return undefined
+  groups.push(value)
+  return groups
+}
+
+/** Program order on paths: a proper prefix is earlier, then the first differing index
+ * (`Path.lt`). */
+const pathLt = (a: ReadonlyArray<number>, b: ReadonlyArray<number>): boolean => {
+  for (let i = 0; i < a.length && i < b.length; i++) {
+    if (a[i]! < b[i]!) return true
+    if (b[i]! < a[i]!) return false
+  }
+  return a.length < b.length
+}
+
+/** The seven node sorts a path addresses; terms are not nodes (`Node`). */
+export type IrNode =
+  | { readonly sort: "eff"; readonly eff: Eff }
+  | { readonly sort: "stmts"; readonly stmts: ReadonlyArray<Stmt> }
+  | { readonly sort: "stmt"; readonly stmt: Stmt }
+  | { readonly sort: "action"; readonly action: ActionTerm }
+  | { readonly sort: "effs"; readonly effs: ReadonlyArray<Eff> }
+  | { readonly sort: "layer"; readonly layer: LayerTerm }
+  | { readonly sort: "layers"; readonly layers: ReadonlyArray<LayerTerm> }
+
+const kEff = (eff: Eff): IrNode => ({ sort: "eff", eff })
+const kStmts = (stmts: ReadonlyArray<Stmt>): IrNode => ({ sort: "stmts", stmts })
+const kStmt = (stmt: Stmt): IrNode => ({ sort: "stmt", stmt })
+const kAction = (action: ActionTerm): IrNode => ({ sort: "action", action })
+const kEffs = (effs: ReadonlyArray<Eff>): IrNode => ({ sort: "effs", effs })
+const kLayer = (layer: LayerTerm): IrNode => ({ sort: "layer", layer })
+const kLayers = (layers: ReadonlyArray<LayerTerm>): IrNode => ({ sort: "layers", layers })
+
+/** One child: the node it holds, and the rebuild that puts a replacement of the same sort
+ * back in its place (`Node.child` and `Node.setChild` in one entry). */
+type Child = readonly [IrNode, (replacement: IrNode) => IrNode | undefined]
+
+const atEff = (v: Eff, back: (v: Eff) => IrNode): Child =>
+  [kEff(v), (c) => (c.sort === "eff" ? back(c.eff) : undefined)]
+const atStmts = (v: ReadonlyArray<Stmt>, back: (v: ReadonlyArray<Stmt>) => IrNode): Child =>
+  [kStmts(v), (c) => (c.sort === "stmts" ? back(c.stmts) : undefined)]
+const atStmt = (v: Stmt, back: (v: Stmt) => IrNode): Child =>
+  [kStmt(v), (c) => (c.sort === "stmt" ? back(c.stmt) : undefined)]
+const atAction = (v: ActionTerm, back: (v: ActionTerm) => IrNode): Child =>
+  [kAction(v), (c) => (c.sort === "action" ? back(c.action) : undefined)]
+const atEffs = (v: ReadonlyArray<Eff>, back: (v: ReadonlyArray<Eff>) => IrNode): Child =>
+  [kEffs(v), (c) => (c.sort === "effs" ? back(c.effs) : undefined)]
+const atLayer = (v: LayerTerm, back: (v: LayerTerm) => IrNode): Child =>
+  [kLayer(v), (c) => (c.sort === "layer" ? back(c.layer) : undefined)]
+const atLayers = (v: ReadonlyArray<LayerTerm>, back: (v: ReadonlyArray<LayerTerm>) => IrNode): Child =>
+  [kLayers(v), (c) => (c.sort === "layers" ? back(c.layers) : undefined)]
+
+/**
+ * A node's children, in the order the path scheme numbers them — a node's children are these
+ * and nothing else (`Node.child`). A spine is a cons cell: its head is child 0 and its tail
+ * child 1, so element `i` of the spine at child `c` of `p` is at `p ++ [c] ++ [1]*i ++ [0]`.
+ */
+export const childrenOf = (n: IrNode): ReadonlyArray<Child> => {
+  switch (n.sort) {
+    case "eff": {
+      const e = n.eff
+      switch (e._tag) {
+        case "suspend": return [atEff(e.body, (body) => kEff({ ...e, body }))]
+        case "bind": return [atEff(e.first, (first) => kEff({ ...e, first })), atEff(e.rest, (rest) => kEff({ ...e, rest }))]
+        case "gen": return [atStmts(e.body, (body) => kEff({ ...e, body }))]
+        case "catchCause":
+          return [atEff(e.body, (body) => kEff({ ...e, body })), atEff(e.handler, (handler) => kEff({ ...e, handler }))]
+        case "matchCause":
+          return [atEff(e.body, (body) => kEff({ ...e, body })), atEff(e.onValue, (onValue) => kEff({ ...e, onValue })),
+            atEff(e.onCause, (onCause) => kEff({ ...e, onCause }))]
+        case "onExit":
+          return [atEff(e.body, (body) => kEff({ ...e, body })), atEff(e.finalizer, (finalizer) => kEff({ ...e, finalizer }))]
+        case "exit": return [atEff(e.body, (body) => kEff({ ...e, body }))]
+        case "uninterruptible": return [atEff(e.body, (body) => kEff({ ...e, body }))]
+        case "interruptible": return [atEff(e.body, (body) => kEff({ ...e, body }))]
+        case "branch":
+          return [atEff(e.thenB, (thenB) => kEff({ ...e, thenB })), atEff(e.elseB, (elseB) => kEff({ ...e, elseB }))]
+        case "whileLoop": return [atEff(e.body, (body) => kEff({ ...e, body }))]
+        case "withFiber": return [atAction(e.action, (action) => kEff({ ...e, action }))]
+        case "scoped": return [atEff(e.body, (body) => kEff({ ...e, body }))]
+        case "acquireRelease":
+          return [atEff(e.acquire, (acquire) => kEff({ ...e, acquire })), atEff(e.release, (release) => kEff({ ...e, release }))]
+        case "choose":
+          return [atEff(e.left, (left) => kEff({ ...e, left })), atEff(e.right, (right) => kEff({ ...e, right }))]
+        case "provideLayer":
+          return [atLayer(e.layer, (layer) => kEff({ ...e, layer })), atEff(e.body, (body) => kEff({ ...e, body }))]
+        case "provideService": return [atEff(e.body, (body) => kEff({ ...e, body }))]
+        default: return []
+      }
+    }
+    case "layer": {
+      const l = n.layer
+      switch (l._tag) {
+        case "effect": return [atEff(l.body, (body) => kLayer({ ...l, body }))]
+        case "effectDiscard": return [atEff(l.body, (body) => kLayer({ ...l, body }))]
+        case "provide":
+          return [atLayer(l.self, (self) => kLayer({ ...l, self })), atLayer(l.that, (that) => kLayer({ ...l, that }))]
+        case "provideMerge":
+          return [atLayer(l.self, (self) => kLayer({ ...l, self })), atLayer(l.that, (that) => kLayer({ ...l, that }))]
+        case "merge":
+          return [atLayer(l.left, (left) => kLayer({ ...l, left })), atLayer(l.right, (right) => kLayer({ ...l, right }))]
+        case "fresh": return [atLayer(l.inner, (inner) => kLayer({ ...l, inner }))]
+        case "orDie": return [atLayer(l.inner, (inner) => kLayer({ ...l, inner }))]
+        case "mergeAll": return [atLayers(l.layers, (layers) => kLayer({ ...l, layers }))]
+        default: return []
+      }
+    }
+    case "stmt": {
+      const s = n.stmt
+      switch (s._tag) {
+        case "bindYield": return [atEff(s.effect, (effect) => kStmt({ ...s, effect }))]
+        case "yieldDiscard": return [atEff(s.effect, (effect) => kStmt({ ...s, effect }))]
+        case "ifElse":
+          return [atStmts(s.thenB, (thenB) => kStmt({ ...s, thenB })), atStmts(s.elseB, (elseB) => kStmt({ ...s, elseB }))]
+        case "whileTrue": return [atStmts(s.body, (body) => kStmt({ ...s, body }))]
+        default: return []
+      }
+    }
+    case "action": {
+      const a = n.action
+      switch (a._tag) {
+        case "fork": return [atEff(a.program, (program) => kAction({ ...a, program }))]
+        case "forkIn": return [atEff(a.program, (program) => kAction({ ...a, program }))]
+        case "forkScoped": return [atEff(a.program, (program) => kAction({ ...a, program }))]
+        case "raceAll": return [atEffs(a.entrants, (entrants) => kAction({ ...a, entrants }))]
+        default: return []
+      }
+    }
+    case "stmts": {
+      const [head, ...tail] = n.stmts
+      if (head === undefined) return []
+      return [atStmt(head, (h) => kStmts([h, ...tail])), atStmts(tail, (t) => kStmts([head, ...t]))]
+    }
+    case "effs": {
+      const [head, ...tail] = n.effs
+      if (head === undefined) return []
+      return [atEff(head, (h) => kEffs([h, ...tail])), atEffs(tail, (t) => kEffs([head, ...t]))]
+    }
+    case "layers": {
+      const [head, ...tail] = n.layers
+      if (head === undefined) return []
+      return [atLayer(head, (h) => kLayers([h, ...tail])), atLayers(tail, (t) => kLayers([head, ...t]))]
+    }
+  }
+}
+
+/** The node with the layer at a path replaced; `undefined` when the path names no layer
+ * (`Node.replaceLayerAt`). */
+const replaceLayerAt = (n: IrNode, path: ReadonlyArray<number>, layer: LayerTerm): IrNode | undefined => {
+  const [index, ...rest] = path
+  if (index === undefined) return n.sort === "layer" ? kLayer(layer) : undefined
+  const child = childrenOf(n)[index]
+  if (child === undefined) return undefined
+  const replaced = replaceLayerAt(child[0], rest, layer)
+  return replaced === undefined ? undefined : child[1](replaced)
+}
+
+/** The declarations put back at their paths, ancestors first (ascending program order), so a
+ * nested target's site exists when its turn comes (`Eff.restoreAll`). */
+export const restoreAll = (main: Eff, decls: ReadonlyArray<readonly [ReadonlyArray<number>, LayerTerm]>): Eff | undefined => {
+  const ordered = [...decls].sort(([a], [b]) => (pathLt(a, b) ? -1 : pathLt(b, a) ? 1 : 0))
+  let node: IrNode = kEff(main)
+  for (const [target, layer] of ordered) {
+    const replaced = replaceLayerAt(node, target, layer)
+    if (replaced === undefined) return undefined
+    node = replaced
+  }
+  return node.sort === "eff" ? node.eff : undefined
+}
+
+/**
+ * A declaration block back to the program (`readModule` of `Read.lean`): the last statement
+ * is the program, and every `const L_<path>` before it is a layer term put back at the path
+ * its name carries. Every occurrence of the identifier — the defining site and each
+ * reference — reads as `ref <path>` in § 3, so putting the declaration back at that path
+ * leaves the first occurrence (the site at exactly that path, which is what `printModule`
+ * hoists) the layer itself and every later occurrence a reference to it. A declaration whose
+ * name is no canonical path spelling, or whose path names no layer, is `shape "module"`.
+ */
+const readModule = (declarations: ReadonlyArray<Declaration>, main: Node): Read<Eff> => {
+  const notModule = refuse({ _tag: "shape", what: "module" })
+  const program = readProgramExpr(main)
+  if (failed(program)) return again(program)
+  const decls: Array<readonly [ReadonlyArray<number>, LayerTerm]> = []
+  for (const declaration of declarations) {
+    const target = readRefName(declaration.name)
+    if (target === undefined || refName(target) !== declaration.name) return notModule
+    const fragment = exprOf(declaration.value)
+    if (failed(fragment)) return again(fragment)
+    const layer = readLayer(fragment.success)
+    if (failed(layer)) return again(layer)
+    decls.push([target, layer.success])
+  }
+  const whole = restoreAll(program.success, decls)
+  return whole === undefined ? notModule : ok(decodeEff(whole))
 }

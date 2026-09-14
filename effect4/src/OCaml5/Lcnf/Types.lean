@@ -1,6 +1,8 @@
 import Lean
+import Conform.Source.Description
 import OCaml5.Ml.Syntax
 import OCaml5.Lcnf.Naming
+import OCaml5.Lcnf.Externs
 
 /-!
 # OCaml5.Lcnf.Types
@@ -75,8 +77,8 @@ def unknownTypeName : String := "lcnf_unknown"
 /-- What the generator learned about one Lean type constant. -/
 structure TypeInfo where
   leanName : Name
-  /-- The OCaml type parameters, in Lean parameter order (every parameter, so that the
-  arity agrees with the mono types `Translate` annotates with). -/
+  /-- Supported type/carrier parameters in source order; explicit dictionary policy matches
+  applications and constructor declarations. Term dictionaries remain computational. -/
   params : List String
   /-- The declaration to emit in full. -/
   decl : Ml.TypeDecl
@@ -90,6 +92,8 @@ structure TypeInfo where
   unknown : Array String
   /-- Whether the type is an abbreviation (a trivial structure). -/
   isAlias : Bool
+  /-- The `field` extern rows this declaration used, as `<Struct>.<field>`. -/
+  usedFields : Array Name := #[]
 deriving Inhabited
 
 /-- Whether the compiler erases a field of this type: a proof or a type. This is the
@@ -112,7 +116,7 @@ def trivialFieldIdx? (n : Name) : MetaM (Option Nat) := do
     if info.isUnsafe || info.isRec then return none
     let [ctorName] := info.ctors | return none
     let ci ← getConstInfoCtor ctorName
-    forallTelescopeReducing ci.type fun xs _ => do
+    Conform.Source.withConstructor ctorName fun _ xs => do
       let mut result := none
       for i in [:xs.size - info.numParams] do
         let x := xs[info.numParams + i]!
@@ -121,10 +125,26 @@ def trivialFieldIdx? (n : Name) : MetaM (Option Nat) := do
           result := some i
       return result
 
+/-- OCaml type parameters are type binders. The one erased dictionary policy is `Row`'s
+order instance, which appears only in its erased ascending proof. Service universes retain
+the existing carrier interpretation. Other value or dictionary parameters refuse by name. -/
+def typeParameterIndices (owner : Name) (count : Nat) (type : Lean.Expr) : Except String (Array Nat) :=
+  go count 0 type #[]
+where
+  go : Nat → Nat → Lean.Expr → Array Nat → Except String (Array Nat)
+    | 0, _, _, out => .ok out
+    | k + 1, i, .forallE name domain body bi, out =>
+      if domain.isSort || domain.isConstOf `Effect4.ServiceUniverse then
+        go k (i + 1) body (out.push i)
+      else if owner == `Effect4.Row && bi == .instImplicit then
+        go k (i + 1) body out
+      else .error s!"{owner}: unsupported parameter {name} at {i}"
+    | _, _, _, _ => .error s!"{owner}: incomplete parameter telescope"
+
 /-- A field type, with the inductive's parameters as free variables, as an OCaml type. Returns
 the type constants it mentions and `none` when the shape could not be spelled. -/
-partial def kernelTy (params : Std.HashMap FVarId String) (e : Lean.Expr) :
-    MetaM (Option Ml.Ty × Array Name) := do
+partial def kernelTy (ex : Externs) (tn : TypeNames) (params : Std.HashMap FVarId String)
+    (e : Lean.Expr) : MetaM (Option Ml.Ty × Array Name) := do
   let e ← whnf e  -- unfold a `def`/`abbrev` head; an inductive head stays
   match e with
   | .fvar id =>
@@ -133,40 +153,85 @@ partial def kernelTy (params : Std.HashMap FVarId String) (e : Lean.Expr) :
     | none => return (none, #[])
   | .forallE _ d b _ =>
     if b.hasLooseBVars then return (none, #[])
-    let (d', rd) ← kernelTy params d
-    let (b', rb) ← kernelTy params b
+    let (d', rd) ← kernelTy ex tn params d
+    let (b', rb) ← kernelTy ex tn params b
     match d', b' with
     | some d', some b' => return (some (.arrow d' b'), rd ++ rb)
     | _, _ => return (none, rd ++ rb)
   | .sort _ => return (none, #[])
+  -- `U.Carrier code` as a projection: the universe's parameter is the carrier type
+  | .proj s 0 u =>
+    if s == `Effect4.ServiceUniverse then kernelTy ex tn params u else return (none, #[])
   | _ =>
     let fn := e.getAppFn
     let args := e.getAppArgs
     match fn with
     | .const n _ =>
-      let mut tys : Array Ml.Ty := #[]
-      let mut refs : Array Name := #[]
-      let mut ok := true
-      for a in args do
-        let (t, r) ← kernelTy params a
-        refs := refs ++ r
-        match t with
-        | some t => tys := tys.push t
-        | none => ok := false
-      unless ok do return (none, refs)
-      if let some t := builtinTy? n tys.toList then return (some t, refs)
-      return (some (.con (OCaml5.Lcnf.typeName n) tys.toList), refs.push n)
+      -- A service universe is read as its carrier type: `Carrier U k` (and the projection it
+      -- unfolds to) is the universe's own parameter (`'u service = { value : 'u }`), and a
+      -- closed universe `⟨fun _ => T⟩` (`Env.ValU`) is `T`, so `Context ValU` is `val_ context`.
+      if n == `Effect4.ServiceKey.Carrier || n == `Effect4.ServiceUniverse.Carrier then
+        match args[0]? with
+        | some u => kernelTy ex tn params u
+        | none => return (none, #[])
+      else if n == `Effect4.ServiceUniverse.mk then
+        match args[0]? with
+        | some f =>
+          if f.isLambda && !f.bindingBody!.hasLooseBVars then kernelTy ex tn params f.bindingBody!
+          else return (none, #[])
+        | none => return (none, #[])
+      else
+        let mut tys : Array Ml.Ty := #[]
+        let mut refs : Array Name := #[]
+        let mut ok := true
+        let info ← getConstInfo n
+        let .ok indices := typeParameterIndices n args.size info.type | return (none, #[])
+        for i in indices do
+          let a := args[i]!
+          let (t, r) ← kernelTy ex tn params a
+          refs := refs ++ r
+          match t with
+          | some t => tys := tys.push t
+          | none => ok := false
+        unless ok do return (none, refs)
+        -- an extern type row: the carrier chain applied to the Lean arguments. `n` is still
+        -- pushed as a reference so `generate` sees the row was hit.
+        if let some chain := ex.tys[n]? then
+          return (some (applyChain chain tys.toList), refs.push n)
+        -- an extern element row: `List T` is the carrier, wherever it is spelled
+        if let some chain := ex.elemChain? n args.toList then
+          return (some (applyChain chain tys.toList), refs)
+        if let some t := builtinTy? n tys.toList then return (some t, refs)
+        return (some (.con (OCaml5.Lcnf.typeNameIn tn n) tys.toList), refs.push n)
+    -- `U.Carrier code` applied: `whnf` unfolds `ServiceKey.Carrier U k` to this shape
+    | .proj s 0 u =>
+      if s == `Effect4.ServiceUniverse then kernelTy ex tn params u else return (none, #[])
     | _ => return (none, #[])
 
+/-- A `field` extern row applied to a field's spelled type. The field must be a `list` (that is
+what a Lean `List _` carrier is); a `List (κ × v)` carrier keeps only `v`, which is how
+`MemoMap.entries : List (LayerId × MemoEntry)` becomes `memo_entry L.t`. -/
+def externField (chain : List String) (owner : Name) (field : String) (t : Ml.Ty) :
+    Except String Ml.Ty :=
+  match t with
+  | .con "list" [elem] =>
+    let elem := match elem with | .tuple [_, v] => v | e => e
+    .ok (applyChain chain [elem])
+  | _ => .error s!"{owner}.{field}: a `field` extern row needs a `list` field type"
+
 /-- Read one inductive. `none` when `n` is not an inductive type. -/
-def typeInfo? (n : Name) : MetaM (Option TypeInfo) := do
+def typeInfo? (ex : Externs) (tn : TypeNames) (n : Name) : MetaM (Option TypeInfo) := do
   let env ← getEnv
   let some (.inductInfo info) := env.find? n | return none
+  let indices ← match typeParameterIndices n info.numParams info.type with
+    | .ok indices => pure indices
+    | .error message => throwError message
   -- the parameter names, from the type's own telescope; made unique
-  let pnames ← forallTelescope info.type fun xs _ => do
+  let pnames ← forallBoundedTelescope info.type info.numParams fun xs _ => do
     let mut seen : Std.HashSet String := {}
     let mut out : Array String := #[]
-    for x in xs[:info.numParams] do
+    for i in indices do
+      let x := xs[i]!
       let base := tyVar (← x.fvarId!.getUserName)
       let mut v := base
       let mut i := 1
@@ -182,44 +247,60 @@ def typeInfo? (n : Name) : MetaM (Option TypeInfo) := do
   let mut aliasTy : Option Ml.Ty := none
   let mut refs : Array Name := #[]
   let mut unknown : Array String := #[]
+  let mut usedFields : Array Name := #[]
   for ctorName in info.ctors do
     let ci ← getConstInfoCtor ctorName
-    let (ctor, fs, alias, r, u) ← forallTelescope ci.type fun xs _ => do
+    let (ctor, fs, alias, r, u, uf) ← Conform.Source.withConstructor ctorName fun _ xs => do
       let mut pmap : Std.HashMap FVarId String := {}
-      for x in xs[:info.numParams], v in pnames do
-        pmap := pmap.insert x.fvarId! v
+      for i in indices, v in pnames do
+        pmap := pmap.insert xs[i]!.fvarId! v
       let mut args : Array Ml.Ty := #[]
       let mut fs : Array Ml.Field := #[]
       let mut alias : Option Ml.Ty := none
       let mut r : Array Name := #[]
       let mut u : Array String := #[]
+      let mut uf : Array Name := #[]
       let mut idx := 0
       for x in xs[info.numParams:] do
         let fname ← x.fvarId!.getUserName
         let fty ← inferType x
         let relevant := !(← isIrrelevantFieldType fty)
         if relevant then
-          let (t?, rr) ← kernelTy pmap fty
+          let (t?, rr) ← kernelTy ex tn pmap fty
           r := r ++ rr
           let t ← match t? with
             | some t => pure t
             | none =>
               u := u.push s!"{n}.{fname} : {← ppExpr fty}"
               pure (Ml.Ty.named unknownTypeName)
+          -- a `field` extern row: the carrier replaces the list, here and in the alias body
+          let key := n ++ fname
+          let t ← match ex.fields[key]? with
+            | none => pure t
+            | some chain =>
+              match externField chain n fname.toString t with
+              | .ok t' => do uf := uf.push key; pure t'
+              | .error msg => throwError msg
           args := args.push t
           fs := fs.push { name := fieldName fname.toString, ty := t }
           if trivialIdx? == some idx then alias := some t
         idx := idx + 1
       let short := shortName ctorName
-      let ctor : Ml.Ctor := { name := OCaml5.Lcnf.ctorName n short, args := args.toList }
-      return (ctor, fs, alias, r, u)
+      let ctor : Ml.Ctor := { name := OCaml5.Lcnf.ctorNameIn tn n short, args := args.toList }
+      return (ctor, fs, alias, r, u, uf)
     ctors := ctors.push ctor
     fields := fs
     if alias.isSome then aliasTy := alias
     refs := refs ++ r
     unknown := unknown ++ u
+    usedFields := usedFields ++ uf
   let params := pnames.toList
-  let tname := OCaml5.Lcnf.typeName n
+  let tname := OCaml5.Lcnf.typeNameIn tn n
+  -- A structure whose every field is erased (`ServiceUniverse`: one `Type`-valued field) has
+  -- no relevant data: OCaml refuses an empty record, so it is the abbreviation `unit`, and
+  -- its constructions are `()` (`Translate.ctorExpr`).
+  if aliasTy.isNone && isStructure env n && info.ctors.length == 1 && fields.isEmpty then
+    aliasTy := some Ml.Ty.unit
   let body : Ml.TyBody :=
     match aliasTy with
     | some t => .alias t
@@ -229,9 +310,11 @@ def typeInfo? (n : Name) : MetaM (Option TypeInfo) := do
   let decl : Ml.TypeDecl := { name := tname, params := params, body := body }
   let placeholder : Option Ml.TypeDecl :=
     if aliasTy.isSome then none
-    else some { name := tname, params := params, body := .variant [{ name := placeholderCtor n }] }
+    else some { name := tname, params := params,
+                body := .variant [{ name := placeholderCtorIn tn n }] }
   return some { leanName := n, params := params, decl := decl, placeholder := placeholder,
-                refs := refs, unknown := unknown, isAlias := aliasTy.isSome }
+                refs := refs, unknown := unknown, isAlias := aliasTy.isSome,
+                usedFields := usedFields }
 
 /-! ## The closure -/
 
@@ -251,11 +334,20 @@ structure Generated where
   unknown : Array String := #[]
   /-- OCaml type names claimed twice by different Lean constants; the second is renamed. -/
   collisions : Array (String × Name × Name) := #[]
+  /-- `type` extern rows that a declaration referred to. -/
+  usedTys : Array Name := #[]
+  /-- `field` extern rows that a declaration used. -/
+  usedFields : Array Name := #[]
+  /-- `elem` extern rows whose element type this run reached. A weaker ledger than the other
+  three: it says the row's type is live, not that every `List` of it was rewritten (that is
+  what `ocamlopt` says). -/
+  usedElems : Array Name := #[]
 
 /-- Emit the closure. `full` are the types to emit in full (every type `Translate` destructs
 or constructs, plus whatever the caller asks for); `mentioned` are types that need at least
 a placeholder (those in the annotations of translated code). -/
-partial def generate (full : Array Name) (mentioned : Array Name) : MetaM Generated := do
+partial def generate (full : Array Name) (mentioned : Array Name) (tn : TypeNames := {})
+    (ex : Externs := {}) : MetaM Generated := do
   let fullSet : NameSet := full.foldl (·.insert ·) {}
   let mut g : Generated := {}
   let mut done : NameSet := {}
@@ -266,22 +358,30 @@ partial def generate (full : Array Name) (mentioned : Array Name) : MetaM Genera
     let (n, wantFull) := queue[i]!
     i := i + 1
     if done.contains n || isBuiltinType n then continue
+    -- `Extract Constant` on a type: the carrier is spelled by the row, nothing is emitted
+    if ex.tys.contains n then
+      unless g.usedTys.contains n do g := { g with usedTys := g.usedTys.push n }
+      continue
     done := done.insert n
-    let info? ← typeInfo? n
+    let info? ← typeInfo? ex tn n
     if info?.isNone then
       g := { g with notInductive := g.notInductive.push n }
       continue
     let info := info?.get!
-    -- resolve a name collision by falling back to the full path
-    let mut decl := info.decl
-    let mut ph := info.placeholder
+    -- A name claimed twice is *reported*, not patched here: renaming a declaration after its
+    -- annotations and constructors have been rendered makes the two disagree (the U0 probe's
+    -- `val_` failure). The driver re-runs with the collision in `TypeNames`, so `typeInfo?`,
+    -- `kernelTy` and `Translate` all spell the renamed type the same way.
+    let decl := info.decl
+    let ph := info.placeholder
     if let some other := taken[info.decl.name]? then
       if other != n then
-        let renamed := snake ("_".intercalate (components n))
         g := { g with collisions := g.collisions.push (info.decl.name, other, n) }
-        decl := { decl with name := renamed }
-        ph := ph.map fun p => { p with name := renamed }
     taken := taken.insert decl.name n
+    if ex.elems.contains n then
+      unless g.usedElems.contains n do g := { g with usedElems := g.usedElems.push n }
+    for f in info.usedFields do
+      unless g.usedFields.contains f do g := { g with usedFields := g.usedFields.push f }
     let emitFull := wantFull || fullSet.contains n || info.isAlias
     if emitFull then
       g := { g with decls := g.decls.push decl, unknown := g.unknown ++ info.unknown }

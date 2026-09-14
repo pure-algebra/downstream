@@ -9,12 +9,16 @@ full, then open only the authority documents named for the current task.
 | --- | --- |
 | `README.md` | what the product is, the application face, how to build |
 | `docs/ARCHITECTURE.md` | the source tree, module boundaries, dependency direction, the API seam |
-| `docs/DESIGN-BASIS.md` | the representation decisions (DB-01 … DB-10), their status and sources |
+| `docs/GENERATED.md` | generated artifact inventory, producer commands, inputs, consumers, stamps and gates |
+| `docs/DESIGN-BASIS.md` | the representation decisions (DB-01 … DB-15), their status and sources |
+| `docs/DESIGN-ISSUES.md` | the open design questions (DI-nn): status, what each would force to be redone, the milestone to decide by; a ruling is made only when written into a tracked file |
+| `docs/DESIGN-MAP.md` | the framework: the five layers of the reification, their representations and conversions with the grade of evidence each carries, the drift points, the literature per layer, the register rows per layer; cited by section |
 | `docs/RUNTIME-COVERAGE.md` | the rc.112 runtime mechanism census, its rows, and the one coverage report format |
 | `docs/SCHEMA-ANNOTATIONS.md` | the annotation data plane as the host defines it |
 | `Test/contracts/` | frozen contract packets and their executable falsifiers |
 | `Test/Counterexamples/REGISTER.md` | stable IDs of every declaration-changing counterexample |
-| `src/Effect4/` | library declarations and proofs |
+| `Test/fixtures/baseline/<commit>/` | retained pre-change baselines of the descriptions and alphabets, the independent authority a compatibility gate compares against (DI-47). No generator writes here; it changes only by a named promotion command, and a diff in it is a review event, not drift |
+| `src/Effect4/` | API and functional utilities through `Effect4`; the proof graph through `Effect4.Laws`, with declaration namespaces unchanged |
 | `Test/` | batteries, attacks and proof receipts; `Audit/AxiomGate.lean` is the gate |
 | `generated/` | deterministic projections only; never hand-edited |
 | `docs/research/` (not tracked) | working notes, plans, the proof-graph ledgers and surveys; synced between machines directly |
@@ -60,6 +64,8 @@ number in a report behind a command; `ocaml/README.md` is its map.
   traverse a `String` is admitted by exact name in `AxiomGate.lean`, never by
   module. A battery `def` over rendered text reaches `Classical.choice`: keep
   rendered bytes inside `#guard`s.
+- Every library source must be reachable from `Effect4` or `Effect4.Laws`; `Effect4`
+  must never import the Laws graph. The module-closure gate checks both roots.
 - Every battery file under `Test/` must be reachable from
   `Test/All.lean`, or the module-closure gate refuses the build.
 - Do not say "sound", "equivalent", "preserves", "fully reified", or

@@ -32,13 +32,16 @@ namespace Effect4.Program
 
 open Effect4.Machine.Env (Requirement)
 
-/-- Why the printer declined a program. Both arms are the §5.1 table's "refused" row:
-`choose` names the decision site the flows front-end would have answered from a tape, and
-`internalAction` names the `ActionTerm` constructor whose rc.112 counterpart has no public
-export with the same frame shape. -/
+/-- Why the printer declined a program. The first two arms are the §5.1 table's "refused"
+row: `choose` names the decision site the flows front-end would have answered from a tape,
+and `internalAction` names the `ActionTerm` constructor whose rc.112 counterpart has no
+public export with the same frame shape. `layerRef` is the declaration block's (the host
+rows slice): a layer reference whose target path names no layer, so no `const` can be
+hoisted for it. -/
 inductive PrintRefusal
   | choose (site : Nat)
   | internalAction (name : String)
+  | layerRef (target : List Nat)
 deriving DecidableEq, Repr
 
 /-- The binder minted for environment position `index`: `a0`, `a1`, … The environment is
@@ -76,16 +79,93 @@ def printCause : CauseTerm → TypeScript.Expr
   | .interrupt (some who) => .call (.ident "Cause.interrupt") [printTerm who]
   | .both left right => .call (.ident "Cause.combine") [printCause left, printCause right]
 
+/-- The two components of a `pair` application, the request shape a tuple-call row
+receives from an admitted program. -/
+def pairArgs? : Term → Option (Term × Term)
+  | .app atom (.cons x (.cons y .nil)) => if atom = "pair" then some (x, y) else none
+  | _ => none
+
+theorem pairArgs?_some {r x y : Term} (h : pairArgs? r = some (x, y)) :
+    r = .app "pair" (.cons x (.cons y .nil)) := by
+  unfold pairArgs? at h
+  split at h
+  · split at h
+    · rename_i hp
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      subst hp
+      rfl
+    · cases h
+  · cases h
+
+/-- The argument list of a tuple-call row (source-repairs §18): the components of a
+`pair` application print as the two arguments the pinned two-argument export declares,
+so the host infers the export's type parameters from them; any other request, a saved
+variable in the admitted image, prints as `fst(request)` and `snd(request)`, one read
+of the value per component. -/
+def printTupleArgs (request : Term) : List TypeScript.Expr :=
+  match pairArgs? request with
+  | some (x, y) => [printTerm x, printTerm y]
+  | none => [.call (.ident "fst") [printTerm request], .call (.ident "snd") [printTerm request]]
+
+/-- A row's called head: its `spelling`, applied to the declared type arguments when it has
+any. rc.112's `Deferred.make` has defaulted type parameters, so the arguments alone do not
+determine the handle's types and the call must carry them (`E4-CHECK-CE-013`). -/
+def printRowHead (row : Row) : TypeScript.Expr :=
+  match row.typeArgs with
+  | [] => .ident row.spelling
+  | args => .generic (.ident row.spelling) args
+
+/-- The arguments of a method use the ordinary call or tuple-call convention.
+The receiver is the first component of the original request. -/
+def methodArgsRow (row : Row) : Row :=
+  let args := match row.request with
+    | .prod _ args => args
+    | _ => .never
+  { row with request := args, shape := match args with
+      | .prod _ _ => .tupleCall
+      | _ => .call }
+
+@[simp] theorem methodArgsRow_spelling (row : Row) : (methodArgsRow row).spelling = row.spelling := rfl
+@[simp] theorem methodArgsRow_trailing (row : Row) : (methodArgsRow row).trailing = row.trailing := rfl
+@[simp] theorem methodArgsRow_typeArgs (row : Row) : (methodArgsRow row).typeArgs = row.typeArgs := rfl
+@[simp] theorem methodArgsRow_kind (row : Row) : (methodArgsRow row).kind = row.kind := rfl
+
+theorem methodArgsRow_shape (row : Row) :
+    (methodArgsRow row).shape = .call ∨ (methodArgsRow row).shape = .tupleCall := by
+  unfold methodArgsRow
+  split <;> simp
+  split <;> simp
+
+def printMethodArgs (row : Row) (args : Term) : List TypeScript.Expr :=
+  let trailing := row.trailing.map TypeScript.Expr.ident
+  if (methodArgsRow row).shape = .tupleCall then printTupleArgs args ++ trailing
+  else if (methodArgsRow row).request = Ty.unit then trailing
+  else printTerm args :: trailing
+
+def printMethod (row : Row) (receiver args : Term) : TypeScript.Expr :=
+  match row.typeArgs with
+  | [] => .method (printTerm receiver) row.spelling (printMethodArgs row args)
+  | typeArgs => .call (.generic (.member (printTerm receiver) row.spelling) typeArgs)
+      (printMethodArgs row args)
+
 /-- A row's operation, by the row's declared shape and request type: a value row is the
 bare `spelling` (the service route's nullary rows), a call row on a `unit` request is
-`spelling()`, and every other call row is `spelling(request)`. -/
+`spelling()`, and every other call row is `spelling(request)`. A tuple-call row receives
+`printTupleArgs` of its request as two ordinary arguments, then the declared trailing
+names. A row that declares type arguments carries them on the head. -/
 def printRow (row : Row) (request : Term) : TypeScript.Expr :=
   let trailing := row.trailing.map TypeScript.Expr.ident
   match row.shape with
   | .value => .ident row.spelling
   | .call =>
-    if row.request = Ty.unit then .call (.ident row.spelling) trailing
-    else .call (.ident row.spelling) (printTerm request :: trailing)
+    if row.request = Ty.unit then .call (printRowHead row) trailing
+    else .call (printRowHead row) (printTerm request :: trailing)
+  | .tupleCall => .call (printRowHead row) (printTupleArgs request ++ trailing)
+  | .method =>
+    match pairArgs? request with
+    | some (receiver, args) => printMethod row receiver args
+    | none => printMethod row (.app "fst" (.cons request .nil)) (.app "snd" (.cons request .nil))
 
 /-- The fork options object rc.112's fork family takes:
 `{ startImmediately: b, uninterruptible: true | false | "inherit" }`. `daemon` is not a
@@ -100,6 +180,18 @@ def printForkOptions (options : Effect4.Supervision.ForkOptions) : TypeScript.Ex
         | .inherit => .str "inherit") ]
 
 variable {Op : Type}
+
+/-- A service key as rc.112 spells one — `Context.Service<Shape>("key")`
+(`Context.ts:201-215`): the key's two numbers as the string that is its runtime identity
+(`:219`, so two spellings of one key are one service), with its carrier from the signature's
+service table as the type argument when the table has one. Minted from the key's own data,
+as `Var.name` mints a binder from its position: the printer invents no name. -/
+def printKey (sig : Signature Op) (key : ServiceKey) : TypeScript.Expr :=
+  let head : TypeScript.Expr :=
+    match sig.serviceTy key with
+    | some ty => .generic (.ident "Context.Service") [ty.render]
+    | none => .ident "Context.Service"
+  .call head [.str ("k" ++ toString key.name.value ++ "_" ++ toString key.service.value)]
 
 mutual
   /-- `print sig n e` is `e` as one TypeScript expression, with `n` the environment's
@@ -183,6 +275,76 @@ mutual
       .ok (.call (.ident "Effect.acquireRelease")
         [a, .lambda [Var.name n, Var.name (n + 1)] r])
     | .choose site _ _ => .error (.choose site)
+    -- `Effect.provide(self, layer, { local })` (`internal/layer.ts:8-22`, `Effect.ts:11383`):
+    -- the option object only when set, as the corpus writes it
+    | .provideLayer layer isLocal body => do
+      let b ← print sig n body
+      let l ← printLayer sig layer
+      .ok (.call (.ident "Effect.provide")
+        (if isLocal then [b, l, .object [("local", .bool true)]] else [b, l]))
+    -- `Effect.service(key)` (`internal/effect.ts:2059`)
+    | .service key => .ok (.call (.ident "Effect.service") [printKey sig key])
+    -- `Effect.provideService(self, key, value)` (`internal/effect.ts:2202`)
+    | .provideService key value body => do
+      let b ← print sig n body
+      .ok (.call (.ident "Effect.provideService") [b, printKey sig key, printTerm value])
+
+  /-- A layer term as the rc.112 combinators it transcribes, one arm per `Layer.ts` export
+  (the join, 2026-09-07). A body is closed — the layer's own scope is its ambient one
+  (`Layer.ts:1438`) — so it prints at environment length `0` and its first binder is `a0`.
+  `merge` prints as the two-argument `Layer.merge(a, b)` (`Layer.ts:1850`) and `mergeAll` as
+  the n-ary `Layer.mergeAll(a, b, …)` (`:1652`), never one as the other: the two build
+  different scope trees, and the compile follows the term's. A reference prints as the
+  identifier that carries its target's path (`LayerTerm.refName`, `Refs.lean`); the `const`
+  that binds it is `printModule`'s, and an expression printed on its own leaves the
+  identifier free. The named spelling of a layer — keys as class identifiers — is **not
+  printed by any module of this tree**: it is the open half of DI-24
+  (`docs/DESIGN-ISSUES.md`), and the `Codegen/Layer.lean` this docstring used to forward to
+  has never existed (DI-51: the citation evaded `scripts/check-source-citations.py` because it
+  carried no repository root). -/
+  def printLayer (sig : Signature Op) : LayerTerm Op → Except PrintRefusal TypeScript.Expr
+    | .succeed key value =>
+      .ok (.call (.ident "Layer.succeed") [printKey sig key, printLit value])
+    | .effect key body => do
+      let b ← print sig 0 body
+      .ok (.call (.ident "Layer.effect") [printKey sig key, b])
+    | .effectDiscard body => do
+      let b ← print sig 0 body
+      .ok (.call (.ident "Layer.effectDiscard") [b])
+    | .provide self that => do
+      let s ← printLayer sig self
+      let t ← printLayer sig that
+      .ok (.method s "pipe"
+        [.call (.ident "Layer.provide") [t]])
+    | .provideMerge self that => do
+      let s ← printLayer sig self
+      let t ← printLayer sig that
+      .ok (.method s "pipe"
+        [.call (.ident "Layer.provideMerge") [t]])
+    | .merge left right => do
+      let l ← printLayer sig left
+      let r ← printLayer sig right
+      .ok (.call (.ident "Layer.merge") [l, r])
+    | .fresh inner => do
+      let i ← printLayer sig inner
+      .ok (.call (.ident "Layer.fresh") [i])
+    | .orDie inner => do
+      let i ← printLayer sig inner
+      .ok (.call (.ident "Layer.orDie") [i])
+    | .ref target => .ok (.ident (LayerTerm.refName target))
+    | .mergeAll layers => do
+      let items ← printLayers sig layers
+      .ok (.call (.ident "Layer.mergeAll") items)
+
+  /-- The layers of a `mergeAll`, each closed. -/
+  def printLayers (sig : Signature Op) :
+      LayerTerms Op → Except PrintRefusal (List TypeScript.Expr) := fun layers =>
+    match layers with
+    | .nil => .ok []
+    | .cons head tail => do
+      let h ← printLayer sig head
+      let t ← printLayers sig tail
+      .ok (h :: t)
 
   /-- A generator body, statement by statement. `bindYield` binds the answer as the next
   variable and the rest continues one longer; `ifElse` and `whileTrue` are block-scoped, so
@@ -226,7 +388,8 @@ mutual
 
   /-- The fiber actions. The five with no public rc.112 export of the same frame shape are
   refused by constructor name; everything else is `Effect.fork*`, `Fiber.*`, `Scope.close`,
-  `Effect.context()` or `Effect.fiberId`. -/
+  `Effect.context()` or `Effect.fiberId`, with synchronous `Fiber.runIn` wrapped by
+  `Effect.withFiber` to return its declared unit effect. -/
   def printAction (sig : Signature Op) (n : Nat) :
       ActionTerm Op → Except PrintRefusal TypeScript.Expr
     | .fork program options => do
@@ -240,7 +403,12 @@ mutual
       let p ← print sig n program
       .ok (.call (.ident "Effect.forkScoped") [p, printForkOptions options])
     | .runIn target scope =>
-      .ok (.call (.ident "Fiber.runIn") [printTerm target, printTerm scope])
+      -- `Fiber.runIn` is synchronous and returns its fiber (rc.112 :5440-5462).
+      -- The IR action returns unit after this WithFiber callback has linked it.
+      .ok (.call (.ident "Effect.withFiber")
+        [.arrowBlock []
+          [.exprStmt (.call (.ident "Fiber.runIn") [printTerm target, printTerm scope]),
+            .ret (.ident "Effect.void")]])
     | .interrupt target => .ok (.call (.ident "Fiber.interrupt") [printTerm target])
     | .interruptScoped _ => .error (.internalAction "interruptScoped")
     | .interruptAll targets none =>
@@ -261,11 +429,23 @@ mutual
       .ok (.call (.ident "Scope.close") [printTerm scope, printTerm exit])
 end
 
-/-- The printed program as an exported constant. The declared type is
-`Effect.Effect<A, E>` — the two parameters `EffTy` spells — exactly when the requirement
-row is empty; a program with a requirement has no two-parameter spelling here, so its type
-is left to inference (§2.2 owns the third parameter, and the requirement's service names
-are not this lane's). -/
+/-- The printed program as an exported constant.
+
+**What this does today.** The declared type is `Effect.Effect<A, E>` — the two parameters
+`EffTy` spells — exactly when the requirement row is empty. A program *with* a requirement has
+no two-parameter spelling here, so it prints with **no declared type at all** and the host
+infers one.
+
+**The policy this owes (DI-24, `docs/DESIGN-ISSUES.md`).** A program prints its declared type
+*always*, with three parameters — `Effect.Effect<A, E, R>` — because a printed program with no
+declared type is the one case where the printed image carries less than the program's own
+typing, and the type oracle (DI-29) cannot check what is not printed. What is not settled, and
+so is not implemented here, is the *spelling* of `R`: the requirement row is a set of
+`ServiceKey`s, and the target spells a requirement as the union of the services' `Identifier`
+types, which is the same open question as the class spelling of keys in `printLayer` above.
+Until that spelling is fixed under `tsc` on the truth harness, this arm stays two-parameter
+and a requirement-carrying program stays untyped in its printed image; the reader
+(`Codegen/Read.lean`) reads both shapes. -/
 def printDecl (name : String) (ty : EffTy) (body : TypeScript.Expr) : TypeScript.ConstDecl :=
   { doc := []
   , name := name
@@ -275,5 +455,27 @@ def printDecl (name : String) (ty : EffTy) (body : TypeScript.Expr) : TypeScript
         some ("Effect.Effect<" ++ ty.answer.render ++ ", " ++ ty.error.render ++ ">")
       else
         none }
+
+/-- The printed program as a declaration block (the host rows slice): one
+`const L_<path> = …` per referenced layer target, in declaration order (`Path.declBefore`: a
+target inside another first, then program order), each hoisted out of the program so that
+its defining site and every reference print as the one identifier (`Refs.lean` `hoistAll`),
+which is one rc.112 layer object and one memo entry; the main declaration last. A program
+with no references is `[printDecl name ty (print …)]`. `readModule` (`Codegen/Read.lean`)
+is the inverse on what this prints. -/
+def printModule (sig : Signature Op) (name : String) (ty : EffTy) (e : Eff Op) :
+    Except PrintRefusal (List TypeScript.ConstDecl) :=
+  match e.hoistAll with
+  | .error target => .error (.layerRef target)
+  | .ok (main, decls) => do
+    let ordered := Path.sortBy Path.declBefore (decls.map (·.1))
+    let ds ← ordered.mapM fun t =>
+      match decls.find? (·.1 == t) with
+      | some (_, l) => do
+        let x ← printLayer sig l
+        .ok ({ doc := [], name := LayerTerm.refName t, value := x } : TypeScript.ConstDecl)
+      | none => .error (.layerRef t)
+    let m ← print sig 0 main
+    .ok (ds ++ [printDecl name ty m])
 
 end Effect4.Program

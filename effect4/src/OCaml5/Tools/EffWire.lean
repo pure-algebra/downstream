@@ -1,4 +1,7 @@
+import Tools.GeneratedStamp
 import Effect4.Program.Wire
+import Tools.ProgramStructure
+import OCaml5.Eff.Goldens
 
 /-!
 # EffWire — the goldens of the Eff wire
@@ -23,33 +26,46 @@ def hexOfByte (b : UInt8) : String :=
 
 def hex (bs : List UInt8) : String := String.join (bs.map hexOfByte)
 
-/-- The constructor order every implementation of the wire must agree on. -/
-def manifest : String :=
-  "\n".intercalate
-    [ "Lit: unit nat bool str"
-    , "Term: var lit app"
-    , "Terms: nil cons"
-    , "CauseTerm: fail die interrupt both"
-    , "FnName: incr double zeroWhenPositive noChange takeAndBump"
-    , "FinalizerStrategy: sequential parallel"
-    , "NativeOp: refMake refGet refSet refGetAndSet refSetAndGet refUpdate refGetAndUpdate refUpdateAndGet refUpdateSome refGetAndUpdateSome refUpdateSomeAndGet refModify refModifySome deferredMake deferredIsDone deferredPoll deferredSucceed deferredFail deferredAwait scopeMake"
-    , "MaskMode: interruptible uninterruptible inherit"
-    , "ObserverMode: awaitValue joinEffect"
-    , "ForkOptions: startImmediately daemon maskMode"
-    , "Eff: succeed fail failCause yieldError sync suspend perform bind gen catchCause matchCause onExit exit uninterruptible interruptible branch whileLoop yieldNow callback awaitFiber withFiber scoped acquireRelease choose"
-    , "Stmt: bindYield yieldDiscard ret ifElse whileTrue breakLoop"
-    , "Stmts: nil cons"
-    , "Effs: nil cons"
-    , "ActionTerm: fork forkIn forkScoped runIn interrupt interruptScoped interruptAll awaitAll awaitAllFailFast snapshotChildren awaitNewChildren raceAll setContext getContext getId closeScope"
-    , "tags: bool=1 nat=2 string=3 list=4 pair=5 none=6 some=7 bytes=8 unit=9 ctor=10" ]
+/-- The constructor order every implementation of the wire must agree on (the join of
+2026-09-07 appended `provideLayer`, `service` and `provideService` to `Eff`, and added
+`LayerTerm` and the `ServiceKey` fields; `ocaml/eff/test/test_lean_wire.ml` checks every line
+against the OCaml library's generated tables). -/
+def manifest (env : Lean.Environment) : IO String := do
+  let families := Tools.ProgramStructure.allSpecs.map (·.leanName)
+  let mut rows : List String := []
+  for name in families do
+    let names ← if Lean.isStructure env name then
+      pure (Lean.getStructureFields env name).toList
+    else
+      match env.find? name with
+      | some (.inductInfo info) => pure info.ctors
+      | _ => throw (IO.userError s!"EffWire: no inductive family {name}")
+    rows := rows ++ [name.getString! ++ ": " ++ " ".intercalate (names.map Lean.Name.getString!)]
+  let tags := Effect4.Store.Tag.all
+  return "\n".intercalate (rows ++ ["tags: " ++ " ".intercalate
+    (tags.map fun (name, value) => name ++ "=" ++ toString value.toNat)])
 
 def main (args : List String) : IO Unit := do
+  Lean.initSearchPath (← Lean.findSysroot)
+  let env ← Lean.importModules #[{ module := `Effect4.Program.Wire }] {} 0
+  let manifest ← manifest env
   match args with
   | [dir] =>
+    let stamp ← Tools.GeneratedStamp.line "src/OCaml5/Tools/EffWire.lean"
     IO.FS.createDirAll dir
     for (name, p) in Corpus.all do
       IO.FS.writeFile s!"{dir}/{name}.hex" (hex (encodeProgram p) ++ "\n")
     IO.FS.writeFile s!"{dir}/manifest.txt" (manifest ++ "\n")
+    -- Identity comes from independently declared Eff values, not a name whitelist.
+    let common := Corpus.all.filterMap fun (name, program) =>
+      match OCaml5.Eff.Corpus.corpus.find? (·.1 == name) with
+      | some (_, other) => if program == other then some name else none
+      | none => none
+    IO.FS.writeFile s!"{dir}/same-programs.txt" ("\n".intercalate common ++ "\n")
+    Tools.GeneratedStamp.sidecar s!"{dir}/same-programs.txt" stamp
+    for (name, _) in Corpus.all do
+      Tools.GeneratedStamp.sidecar s!"{dir}/{name}.hex" stamp
+    Tools.GeneratedStamp.sidecar s!"{dir}/manifest.txt" stamp
     IO.println s!"wrote {Corpus.all.length} goldens and manifest.txt to {dir}"
   | _ =>
     IO.println manifest

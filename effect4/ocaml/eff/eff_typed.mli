@@ -9,7 +9,7 @@
 
    Behaviours (see eff_typed.ml for the argument):
    E1  for every constructible `p : (empty, 'a, 'e) eff`, `Eff_typing.well_typed (erase p)`,
-       and the checker's answer and error are `to_ty` of the indices.   tested (27 programs)
+       and the checker's answer and error are `to_ty` of the indices.   tested (named corpus)
    E2  `Eff_wire.encode_program (erase p)` is byte for byte what Lean encodes for the same
        program.                                                  tested (goldens/<name>.bin)
    E3  completeness is deliberately partial (unions are not canonical at the type level, a
@@ -62,6 +62,15 @@ type _ ty =
   | Fiber_of : 'a ty * 'e ty -> ('a, 'e) fiber ty
   | Union : 'a ty * 'b ty -> ('a, 'b) union ty
 
+(* DI-62: a closed witness for types with an exact runtime error image. No Boolean,
+   arbitrary product, handle, or container witness can be constructed. *)
+type _ error_ty =
+  | Error_never : never error_ty
+  | Error_nat : nat error_ty
+  | Error_string : string error_ty
+  | Error_pair : (string * string) error_ty
+  | Error_union : 'a error_ty * 'b error_ty -> ('a, 'b) union error_ty
+
 (* ---- environments and variables ----
    An environment is a type-level snoc list `'newest * 'older`, `empty` at the root; a
    variable is a de Bruijn index counted from the newest entry. *)
@@ -94,7 +103,7 @@ type (_, _) term =
 (* ---- causes (causeTy) ---- *)
 
 type (_, _) cause =
-  | C_fail : ('env, 'e) term -> ('env, 'e) cause
+  | C_fail : 'e error_ty * ('env, 'e) term -> ('env, 'e) cause
   | C_die : ('env, 'd) term -> ('env, never) cause
   | C_interrupt : ('env, nat) term option -> ('env, never) cause
   | C_both : ('env, 'e1) cause * ('env, 'e2) cause -> ('env, ('e1, 'e2) union) cause
@@ -125,6 +134,9 @@ type (_, _, _, _) op =
   | Deferred_fail : (deferred_number * nat, bool, never, sync) op
   | Deferred_await : (deferred_number, nat, nat, async) op
   | Scope_make : Eff_types.finalizer_strategy -> (unit, scope, never, sync) op
+  (* the timer (A4, 2026-09-08): `Effect.sleep(millis)` and `Effect.currentTimeMillis` *)
+  | Sleep : (nat, unit, never, async) op
+  | Clock_now : (unit, nat, never, sync) op
 
 (* ---- the witnesses ---- *)
 
@@ -156,13 +168,33 @@ type (_, _, _, _) observer =
 type in_loop
 type not_in_loop
 
+(* ---- service keys, typed by their own data (nativeServiceTy) ----
+   A free name (`Env.firstFreeName` = 4 and above) carries what its type code spells: 4 a
+   number, 5 a boolean, 6 unit, 7 a `Ref.Ref<number>` handle; of the reserved names 0-3 only
+   the Scope key types. `free_name` is abstract: a key under a reserved name cannot be built. *)
+
+type free_name
+
+(** `Some n` when `n` is a free name (4 and above), `None` for a reserved one. *)
+val free_name : int -> free_name option
+
+type _ skey =
+  | Scope_key : scope skey
+  | Nat_key : free_name -> nat skey
+  | Bool_key : free_name -> bool skey
+  | Unit_key : free_name -> unit skey
+  | Ref_key : free_name -> ref_number skey
+
+(** A layer value (`litVal`): a string is not one. *)
+type layer_value = Lv_unit | Lv_nat of int | Lv_bool of bool
+
 (* ---- programs: (environment, answer, error) ---- *)
 
 type (_, _, _) eff =
   | Succeed : ('env, 'a) term -> ('env, 'a, never) eff
-  | Fail : ('env, 'e) term -> ('env, never, 'e) eff
+  | Fail : 'e error_ty * ('env, 'e) term -> ('env, never, 'e) eff
   | Fail_cause : ('env, 'e) cause -> ('env, never, 'e) eff
-  | Yield_error : ('env, 'e) term -> ('env, never, 'e) eff
+  | Yield_error : 'e error_ty * ('env, 'e) term -> ('env, never, 'e) eff
   | Sync : ('env, 'a) term -> ('env, 'a, never) eff
   | Suspend : ('env, 'a, 'e) eff -> ('env, 'a, 'e) eff
   | Perform : ('req, 'ans, 'err, 'k) op * ('env, 'req) term -> ('env, 'ans, 'err) eff
@@ -196,6 +228,9 @@ type (_, _, _) eff =
   | Choose :
       int * ('env, 'a, 'e1) eff * ('env, 'b, 'e2) eff * ('a, 'b, 'c) join_answer
       -> ('env, 'c, ('e1, 'e2) union) eff
+  | Provide_layer : 'e1 layer * bool * ('env, 'a, 'e2) eff -> ('env, 'a, ('e2, 'e1) union) eff
+  | Service : 's skey -> ('env, 's, never) eff
+  | Provide_service : 's skey * ('env, 's) term * ('env, 'a, 'e) eff -> ('env, 'a, 'e) eff
 
 (** A generator body: environment, the return type so far (`no_ret` before the first `ret`),
     error, and whether a `breakLoop` is legal here. *)
@@ -245,6 +280,26 @@ and (_, _, _) action =
   | Get_id : ('env, nat, never) action
   | Close_scope : ('env, scope) term * ('env, ('a, 'e) exit) term -> ('env, unit, never) action
 
+(** A layer term (`layerTy`): `Layer<ROut, E, RIn>` with only the error as an index; the two
+    requirement rows are computed by the checker (E3). A body is closed: typed at the empty
+    environment. *)
+and _ layer =
+  | L_succeed : 's skey * layer_value -> never layer
+  | L_effect : 's skey * (empty, 'a, 'e) eff -> 'e layer
+  | L_effect_discard : (empty, 'a, 'e) eff -> 'e layer
+  | L_provide : 'e1 layer * 'e2 layer -> ('e1, 'e2) union layer
+  | L_provide_merge : 'e1 layer * 'e2 layer -> ('e1, 'e2) union layer
+  | L_merge : 'e1 layer * 'e2 layer -> ('e1, 'e2) union layer
+  | L_fresh : 'e layer -> 'e layer
+  | L_or_die : 'e layer -> never layer
+  (** The host rows slice (2026-09-08): `Layer.mergeAll` over a non-empty spine, typed as the
+      checker's right fold; a reference (`LayerTerm.ref`) has no typed form here. *)
+  | L_merge_all : 'e layers -> 'e layer
+
+and _ layers =
+  | Ls_last : 'e layer -> 'e layers
+  | Ls_cons : 'e1 layer * 'e2 layers -> ('e1, 'e2) union layers
+
 (** A closed program with its witnesses, for tables and tests. *)
 type program = Program : (empty, 'a, 'e) eff * 'a ty * 'e ty -> program
 
@@ -270,6 +325,10 @@ val erase_eff : int -> ('env, 'a, 'e) eff -> Eff_types.eff
 val erase_stmts : int -> ('env, 'r, 'e, 'l) stmts -> Eff_types.stmts
 val erase_effs : int -> ('env, 'a, 'e) effs -> Eff_types.effs
 val erase_action : int -> ('env, 'a, 'e) action -> Eff_types.action_term
+val erase_key : 's skey -> Eff_types.service_key
+val erase_layer_value : layer_value -> Eff_types.lit
+val erase_layer : 'e layer -> Eff_types.layer_term
+val erase_layers : 'e layers -> Eff_types.layer_terms
 
 (** A closed program, erased at the empty environment. *)
 val erase : (empty, 'a, 'e) eff -> Eff_types.eff

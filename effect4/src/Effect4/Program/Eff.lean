@@ -1,5 +1,6 @@
 import Effect4.Machine.Key
 import Effect4.Machine.Supervision
+import Effect4.Program.Ty
 
 /-!
 # Syntax.Eff — the Effect TS program AST (lane A1 of the AST relation)
@@ -35,124 +36,26 @@ namespace Effect4.Program
 
 open Effect4 (ServiceKey)
 
-/-! ## The type language
 
-`Ty` is the type language of the programs this tree prints: the wire types a service row
-spells plus what an `Effect<A, E, R>` needs and a row never spells: `never`, the `Exit`,
-`Cause` and `Fiber` handles, and unions of error types. `render` is its TypeScript spelling;
-the codegen layer reads that and adds nothing. Unions are canonical through `join`: members
-sorted by a structural key, no duplicates, right-nested, `never` the empty union. -/
 
-inductive Ty
-  | never
-  | unit
-  | nat
-  | int
-  | string
-  | bool
-  | handle (target : String)
-  | option (inner : Ty)
-  | list (inner : Ty)
-  | prod (left right : Ty)
-  | except (error value : Ty)
-  /-- `Exit.Exit<A, E>`: what `Effect.exit` and `Fiber.await` answer. -/
-  | exitOf (value error : Ty)
-  /-- `Cause.Cause<E>`: what a `catchCause` handler receives. -/
-  | causeOf (error : Ty)
-  /-- `Fiber.Fiber<A, E>`: what a fork answers. -/
-  | fiberOf (value error : Ty)
-  | union (left right : Ty)
-deriving DecidableEq, Repr
-
-namespace Ty
-
-/-- The TypeScript spelling. rc.112 has no `Either`: an `except` answer is the data reading
-`Result.Result<A, E>`; a `handle` is an opaque host type whose spelling is carried verbatim. -/
-def render : Ty → String
-  | .never => "never"
-  | .unit => "void"
-  | .nat | .int => "number"
-  | .string => "string"
-  | .bool => "boolean"
-  | .handle target => target
-  | .option inner => "Option.Option<" ++ render inner ++ ">"
-  | .list inner => "ReadonlyArray<" ++ render inner ++ ">"
-  | .prod left right => "readonly [" ++ render left ++ ", " ++ render right ++ "]"
-  | .except error value => "Result.Result<" ++ render value ++ ", " ++ render error ++ ">"
-  | .exitOf value error => "Exit.Exit<" ++ render value ++ ", " ++ render error ++ ">"
-  | .causeOf error => "Cause.Cause<" ++ render error ++ ">"
-  | .fiberOf value error => "Fiber.Fiber<" ++ render value ++ ", " ++ render error ++ ">"
-  | .union left right => render left ++ " | " ++ render right
-
-/-- The members of a union, flattened at the top; `never` contributes none. -/
-def members : Ty → List Ty
-  | .never => []
-  | .union left right => members left ++ members right
-  | t => [t]
-
-/-- An injective structural key, for ordering union members: a constructor code, then the
-length-prefixed keys of the components; a handle's target by its UTF-8 bytes
-(`String.toUTF8` is the representation; `String.toList` and the string order reach
-`Classical.choice` on this toolchain, so no member is ordered by its rendering). -/
-def key : Ty → List Nat
-  | .never => [0]
-  | .unit => [1]
-  | .nat => [2]
-  | .int => [3]
-  | .string => [4]
-  | .bool => [5]
-  | .handle target => 6 :: target.toUTF8.data.toList.map UInt8.toNat
-  | .option inner => 7 :: key inner
-  | .list inner => 8 :: key inner
-  | .prod left right => 9 :: (key left).length :: key left ++ key right
-  | .except error value => 10 :: (key error).length :: key error ++ key value
-  | .exitOf value error => 11 :: (key value).length :: key value ++ key error
-  | .causeOf error => 12 :: key error
-  | .fiberOf value error => 13 :: (key value).length :: key value ++ key error
-  | .union left right => 14 :: (key left).length :: key left ++ key right
-
-/-- Lexicographic order on keys, as a Boolean. -/
-def ltKey : List Nat → List Nat → Bool
-  | [], [] => false
-  | [], _ :: _ => true
-  | _ :: _, [] => false
-  | a :: as, b :: bs => if a < b then true else if b < a then false else ltKey as bs
-
-/-- Insert into a list sorted by key, without duplicates. -/
-def insertMember (t : Ty) : List Ty → List Ty
-  | [] => [t]
-  | u :: rest =>
-    if t = u then u :: rest
-    else if ltKey t.key u.key then t :: u :: rest
-    else u :: insertMember t rest
-
-/-- A right-nested union of the given members; none is `never`. -/
-def ofMembers : List Ty → Ty
-  | [] => .never
-  | [t] => t
-  | t :: rest => .union t (ofMembers rest)
-
-/-- The canonical union of two types. -/
-def join (a b : Ty) : Ty :=
-  ofMembers ((members a ++ members b).foldl (fun acc t => insertMember t acc) [])
-
-def isNever : Ty → Bool
-  | .never => true
+/-- The closed error language represented without payload loss by `Err` (DI-62).
+`never` admits no values; unions admit only represented columns. Defects and interruptions
+remain outside this error language. -/
+def supportedErrTy : Ty → Bool
+  | .never | .nat | .string => true
+  | .prod a b => decide (a = .string ∧ b = .string)
+  | .union l r => supportedErrTy l && supportedErrTy r
   | _ => false
 
-/-- The `Scope` service handle. -/
-def scope : Ty := .handle "Scope.Scope"
-
-/-- A context handle. -/
-def context : Ty := .handle "Context.Context<unknown>"
-
-end Ty
+/-- Failure introduction compares the closed error profile after deep normalization.
+The raw support predicate remains available for exact image proofs. -/
+def admittedErrTy (t : Ty) : Bool := supportedErrTy t.normalize
 
 /-! ## Rows: the perform alphabet's declarations
 
 `Eff` is parameterised by `Op`, the positions of a table of rows. The service route's
 table is a family's rows; the native route's is the standard-library links
-(`src/Effect4/StdLib/Links.lean`) whose model reference is a store operation, an async
+(`git:62c04d9:src/Effect4/StdLib/Links.lean`) whose model reference is a store operation, an async
 registration, or a Layer/Context program. `Row` is what typing and the compile read off a
 position. -/
 
@@ -170,6 +73,16 @@ value `spelling` on a unit request (the service route's nullary rows, `cell.get`
 inductive RowShape
   | call
   | value
+  /-- Apply the request tuple as separate arguments, followed by trailing names. -/
+  | tupleCall
+  /-- The first request component is the receiver; its second component supplies the arguments. -/
+  | method
+deriving DecidableEq, Repr
+
+/-- Who answers an asynchronous row: the deferred store or the external oracle. -/
+inductive Registration
+  | deferred
+  | external
 deriving DecidableEq, Repr
 
 structure Row where
@@ -188,7 +101,31 @@ structure Row where
   requires : List ServiceKey := []
   /-- The rc.112 file and lines the row transcribes. -/
   cite : String
+  /-- Explicit type arguments the export must be called with, target type spellings, in
+  order: `Deferred.make<number, number>()`. A row whose answer handle is generic and whose
+  arguments do not determine it needs them, or the host infers the parameter's default and
+  every later use of the handle is typed at that default instead
+  (`E4-CHECK-CE-013`). Empty means the call is printed and read without type arguments. -/
+  typeArgs : List String := []
+  registration : Registration := .deferred
 deriving DecidableEq, Repr
+
+namespace Row
+
+/-- The transient linked view of a raw row. Identity, spelling, call shape, registration,
+requirements and provenance stay unchanged; only the three type columns are canonicalized. -/
+def normalizeTypes (row : Row) : Row :=
+  { row with
+    request := row.request.normalize
+    answer := row.answer.normalize
+    error := row.error.normalize }
+
+@[simp] theorem normalizeTypes_idem (row : Row) :
+    row.normalizeTypes.normalizeTypes = row.normalizeTypes := by
+  cases row
+  simp only [normalizeTypes, Ty.normalize_idem]
+
+end Row
 
 /-! ## Values -/
 
@@ -283,6 +220,19 @@ mutual
     | acquireRelease (acquire release : Eff Op)
     -- flows only: refused by the native printer, tape-answered by the compile (D2)
     | choose (site : Nat) (left right : Eff Op)
+    -- provision (the join, 2026-09-07): a layer is a subterm, and its build runs at its point.
+    -- Appended, so no stored program's bytes move (`Wire.lean`).
+    /-- `Effect.provide(self, layer, { local })` (`internal/layer.ts:8-22`): `scopedWith` a
+    fresh scope, the layer built into it — `Layer.buildWithScope` off the fiber context's memo
+    map, or `buildWithMemoMap` over a private one when `isLocal` — and the body under
+    `provideContext(self, built)`. -/
+    | provideLayer (layer : LayerTerm Op) (isLocal : Bool) (body : Eff Op)
+    /-- `Effect.service(key)` (`internal/effect.ts:2059`): the key is the effect that reads it;
+    a key the context lacks is the host throw (`Context.getUnsafe`), a defect. -/
+    | service (key : ServiceKey)
+    /-- `Effect.provideService(self, key, value)` (`internal/effect.ts:2202-2232`):
+    `updateContext(self, Context.add(key, value))`, a region over the body. -/
+    | provideService (key : ServiceKey) (value : Term) (body : Eff Op)
   /-- A statement of a generator body. -/
   inductive Stmt (Op : Type)
     /-- `const aN = yield* e`: binds the answer as the next variable. -/
@@ -320,9 +270,64 @@ mutual
     | getContext
     | getId
     | closeScope (scope exit : Term)
+  /-- The first-order layer term (the join, 2026-09-07; before it `Program/Provision.lean`):
+  one constructor per rc.112 export, each naming the line it transcribes. A body is an `Eff`
+  program — the same syntax the printer prints and the compile compiles — closed: a layer's
+  own scope is its ambient one (`Layer.ts:1438`), so a body is typed and printed at the empty
+  environment. A layer's identity is its path in the program (`LayerId`, `Machine/Stores.lean`),
+  never a name: rc.112 keys its memo map on the layer object (`Layer.ts:411`, `:438`), and an
+  inline-printed term is one object per site; a second site of one object is `ref`, the
+  path of the defining occurrence (the host rows slice, 2026-09-08, DB-12 amended). The two
+  constructors after `orDie` are appended, so no stored program's bytes move (`Wire.lean`). -/
+  inductive LayerTerm (Op : Type)
+    /-- `Layer.succeed(key, value)` (`Layer.ts:1074`): a service from a value already in hand. -/
+    | succeed (key : ServiceKey) (value : Lit)
+    /-- `Layer.effect(key, body)` (`Layer.ts:1427`): a service built by a program, in the
+    layer's own scope — `Exclude<R, Scope.Scope>` (`:1438`). -/
+    | effect (key : ServiceKey) (body : Eff Op)
+    /-- `Layer.effectDiscard(body)` (`Layer.ts:1512`): construction work that provides nothing. -/
+    | effectDiscard (body : Eff Op)
+    /-- `self.pipe(Layer.provide(that))` (`Layer.ts:2258`). -/
+    | provide (self that : LayerTerm Op)
+    /-- `self.pipe(Layer.provideMerge(that))` (`Layer.ts:2704`). -/
+    | provideMerge (self that : LayerTerm Op)
+    /-- `Layer.merge(left, right)` (`Layer.ts:1850`). -/
+    | merge (left right : LayerTerm Op)
+    /-- `Layer.fresh(inner)` (`Layer.ts:3850`): the same signature, a private memo map. -/
+    | fresh (inner : LayerTerm Op)
+    /-- `Layer.orDie(inner)` (`Layer.ts:3327`). -/
+    | orDie (inner : LayerTerm Op)
+    /-- `const L = …` used at a second site (`Layer.ts:411`, `:438`: rc.112 keys the memo map
+    on the layer object): a reference to the defining occurrence of another layer term of
+    the same program, by its path (`LayerId`). The target precedes the reference in program
+    order and is not itself a reference (`Program/Refs.lean` `layerRefsWF`); the compile
+    redirects to the target's path, so both sites share one memo key (DB-12). -/
+    | ref (target : List Nat)
+    /-- `Layer.mergeAll(a, b, …)` (`Layer.ts:1652`, `mergeAllEffect` `:1587-1602`): one
+    parallel parent scope forked from the caller's, one sequential child of it per layer,
+    every layer built with concurrency equal to their number over one memo map, the contexts
+    merged last-wins (`Context.mergeAll`, `:1600`). `merge` is its binary case (`:1905`);
+    the two build different scope trees, so neither is a spelling of the other. -/
+    | mergeAll (layers : LayerTerms Op)
+  /-- The layers of a `mergeAll`, a spine like `Effs`. -/
+  inductive LayerTerms (Op : Type)
+    | nil
+    | cons (head : LayerTerm Op) (tail : LayerTerms Op)
 end
 
-deriving instance DecidableEq for Eff, Stmt, Stmts, Effs, ActionTerm
+deriving instance DecidableEq for Eff, Stmt, Stmts, Effs, ActionTerm, LayerTerm, LayerTerms
+
+def LayerTerms.toList {Op : Type} : LayerTerms Op → List (LayerTerm Op)
+  | .nil => []
+  | .cons head tail => head :: LayerTerms.toList tail
+
+def LayerTerms.length {Op : Type} : LayerTerms Op → Nat
+  | .nil => 0
+  | .cons _ tail => LayerTerms.length tail + 1
+
+def LayerTerms.ofList {Op : Type} : List (LayerTerm Op) → LayerTerms Op
+  | [] => .nil
+  | head :: tail => .cons head (LayerTerms.ofList tail)
 
 def Stmts.toList {Op : Type} : Stmts Op → List (Stmt Op)
   | .nil => []
@@ -331,6 +336,111 @@ def Stmts.toList {Op : Type} : Stmts Op → List (Stmt Op)
 def Effs.toList {Op : Type} : Effs Op → List (Eff Op)
   | .nil => []
   | .cons head tail => head :: Effs.toList tail
+
+/-! ## Inserting an environment slot
+
+Variables are positions from the start of the environment. Inserting one slot at
+`cut` moves every old position at or above it, including local binders introduced
+inside the program. The cut stays fixed under those binders. Layer bodies use an
+independent empty environment, so a layer subterm is left unchanged.
+-/
+
+/-- The old position after inserting one slot at `cut`. -/
+def Var.weaken (cut index : Nat) : Nat := if index < cut then index else index + 1
+
+mutual
+  def Term.weaken (cut : Nat) : Term → Term
+    | .var index => .var (Var.weaken cut index)
+    | .lit value => .lit value
+    | .app atom args => .app atom (Terms.weaken cut args)
+
+  def Terms.weaken (cut : Nat) : Terms → Terms
+    | .nil => .nil
+    | .cons head tail => .cons (Term.weaken cut head) (Terms.weaken cut tail)
+end
+
+def CauseTerm.weaken (cut : Nat) : CauseTerm → CauseTerm
+  | .fail error => .fail (Term.weaken cut error)
+  | .die defect => .die (Term.weaken cut defect)
+  | .interrupt who => .interrupt (who.map (Term.weaken cut))
+  | .both left right => .both (CauseTerm.weaken cut left) (CauseTerm.weaken cut right)
+
+mutual
+  /-- Insert a slot into the program's surrounding positional environment. This
+  changes variable positions only; operations, service keys and closed layers stay
+  unchanged. Typing under the inserted environment is `effTy_weaken`. -/
+  def Eff.weaken {Op : Type} (cut : Nat) : Eff Op → Eff Op
+    | .succeed value => .succeed (Term.weaken cut value)
+    | .fail error => .fail (Term.weaken cut error)
+    | .failCause cause => .failCause (CauseTerm.weaken cut cause)
+    | .yieldError error => .yieldError (Term.weaken cut error)
+    | .sync thunk => .sync (Term.weaken cut thunk)
+    | .suspend body => .suspend (Eff.weaken cut body)
+    | .perform op request => .perform op (Term.weaken cut request)
+    | .bind first rest => .bind (Eff.weaken cut first) (Eff.weaken cut rest)
+    | .gen body => .gen (Stmts.weaken cut body)
+    | .catchCause body handler => .catchCause (Eff.weaken cut body) (Eff.weaken cut handler)
+    | .matchCause body onValue onCause =>
+      .matchCause (Eff.weaken cut body) (Eff.weaken cut onValue) (Eff.weaken cut onCause)
+    | .onExit body finalizer => .onExit (Eff.weaken cut body) (Eff.weaken cut finalizer)
+    | .exit body => .exit (Eff.weaken cut body)
+    | .uninterruptible body => .uninterruptible (Eff.weaken cut body)
+    | .interruptible body => .interruptible (Eff.weaken cut body)
+    | .branch test thenB elseB =>
+      .branch (Term.weaken cut test) (Eff.weaken cut thenB) (Eff.weaken cut elseB)
+    | .whileLoop initial test step body =>
+      .whileLoop (Term.weaken cut initial) (Term.weaken cut test)
+        (Term.weaken cut step) (Eff.weaken cut body)
+    | .yieldNow priority => .yieldNow priority
+    | .callback register request => .callback register (Term.weaken cut request)
+    | .awaitFiber fiber mode => .awaitFiber (Term.weaken cut fiber) mode
+    | .withFiber action => .withFiber (ActionTerm.weaken cut action)
+    | .scoped body => .scoped (Eff.weaken cut body)
+    | .acquireRelease acquire release =>
+      .acquireRelease (Eff.weaken cut acquire) (Eff.weaken cut release)
+    | .choose site left right => .choose site (Eff.weaken cut left) (Eff.weaken cut right)
+    | .provideLayer layer isLocal body => .provideLayer layer isLocal (Eff.weaken cut body)
+    | .service key => .service key
+    | .provideService key value body =>
+      .provideService key (Term.weaken cut value) (Eff.weaken cut body)
+
+  def Stmt.weaken {Op : Type} (cut : Nat) : Stmt Op → Stmt Op
+    | .bindYield effect => .bindYield (Eff.weaken cut effect)
+    | .yieldDiscard effect => .yieldDiscard (Eff.weaken cut effect)
+    | .ret value => .ret (Term.weaken cut value)
+    | .ifElse test thenB elseB =>
+      .ifElse (Term.weaken cut test) (Stmts.weaken cut thenB) (Stmts.weaken cut elseB)
+    | .whileTrue body => .whileTrue (Stmts.weaken cut body)
+    | .breakLoop => .breakLoop
+
+  def Stmts.weaken {Op : Type} (cut : Nat) : Stmts Op → Stmts Op
+    | .nil => .nil
+    | .cons head tail => .cons (Stmt.weaken cut head) (Stmts.weaken cut tail)
+
+  def Effs.weaken {Op : Type} (cut : Nat) : Effs Op → Effs Op
+    | .nil => .nil
+    | .cons head tail => .cons (Eff.weaken cut head) (Effs.weaken cut tail)
+
+  def ActionTerm.weaken {Op : Type} (cut : Nat) : ActionTerm Op → ActionTerm Op
+    | .fork program options => .fork (Eff.weaken cut program) options
+    | .forkIn program options scope =>
+      .forkIn (Eff.weaken cut program) options (Term.weaken cut scope)
+    | .forkScoped program options => .forkScoped (Eff.weaken cut program) options
+    | .runIn target scope => .runIn (Term.weaken cut target) (Term.weaken cut scope)
+    | .interrupt target => .interrupt (Term.weaken cut target)
+    | .interruptScoped target => .interruptScoped (Term.weaken cut target)
+    | .interruptAll targets who =>
+      .interruptAll (Term.weaken cut targets) (who.map (Term.weaken cut))
+    | .awaitAll targets => .awaitAll (Term.weaken cut targets)
+    | .awaitAllFailFast targets => .awaitAllFailFast (Term.weaken cut targets)
+    | .snapshotChildren => .snapshotChildren
+    | .awaitNewChildren snapshot => .awaitNewChildren (Term.weaken cut snapshot)
+    | .raceAll entrants => .raceAll (Effs.weaken cut entrants)
+    | .setContext context => .setContext (Term.weaken cut context)
+    | .getContext => .getContext
+    | .getId => .getId
+    | .closeScope scope exit => .closeScope (Term.weaken cut scope) (Term.weaken cut exit)
+end
 
 /-! ## The arms: constructor ↔ combinator ↔ primitive, with rc.112 lines -/
 
@@ -351,7 +461,7 @@ def arms : List Arm :=
   , ⟨"yieldError", "yield* new E()", "Prim.yieldableError", "internal/effect.ts:1226"⟩
   , ⟨"sync", "Effect.sync", "Prim.sync", "internal/effect.ts:929"⟩
   , ⟨"suspend", "Effect.suspend", "Prim.suspend", "internal/effect.ts:1093"⟩
-  , ⟨"perform", "yield* op(x) (by the row's kind)", "Prim.sync | Prim.async | a nested body", "src/Effect4/StdLib/Links.lean"⟩
+  , ⟨"perform", "yield* op(x) (by the row's kind)", "Prim.sync | Prim.async | a nested body", "git:62c04d9:src/Effect4/StdLib/Links.lean"⟩
   , ⟨"bind", "Effect.flatMap", "Prim.onSuccess", "internal/effect.ts:1590"⟩
   , ⟨"gen", "Effect.gen(function* () { … })", "Prim.iterator", "internal/effect.ts:1184"⟩
   , ⟨"catchCause", "Effect.catchCause", "Prim.onFailure", "internal/effect.ts:2417"⟩
@@ -368,17 +478,20 @@ def arms : List Arm :=
   , ⟨"withFiber", "Effect.withFiber", "Prim.withFiber", "internal/effect.ts:1147"⟩
   , ⟨"scoped", "Effect.scoped", "the region frames of compileRegion", "internal/effect.ts:3960"⟩
   , ⟨"acquireRelease", "Effect.acquireRelease", "uninterruptible + onExit over the scope", "internal/effect.ts:3978"⟩
-  , ⟨"choose", "(flows only; refused by the native printer)", "tape-answered at compile", "Effects.Flow.RawTerm.choose"⟩ ]
+  , ⟨"choose", "(flows only; refused by the native printer)", "tape-answered at compile", "Effects.Flow.RawTerm.choose"⟩
+  , ⟨"provideLayer", "Effect.provide", "scoped layer build + provideContext region", "internal/layer.ts:8-22"⟩
+  , ⟨"service", "Effect.service", "Prim.onSuccess (Prim.withFiber getCtx) serviceLookup", "internal/effect.ts:2059"⟩
+  , ⟨"provideService", "Effect.provideService", "updateContext region", "internal/effect.ts:2202-2232"⟩ ]
 
 /-- Every constructor has one arm and every arm one constructor. -/
 def constructorNames : List String :=
   ["succeed", "fail", "failCause", "yieldError", "sync", "suspend", "perform", "bind", "gen",
    "catchCause", "matchCause", "onExit", "exit", "uninterruptible", "interruptible", "branch",
    "whileLoop", "yieldNow", "callback", "awaitFiber", "withFiber", "scoped", "acquireRelease",
-   "choose"]
+   "choose", "provideLayer", "service", "provideService"]
 
 #guard arms.map Arm.constructor = constructorNames
-#guard constructorNames.length = 24
+#guard constructorNames.length = 27
 
 /-! ## The separation-4 receipts: first-order, decidable throughout -/
 

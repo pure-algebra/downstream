@@ -1,4 +1,4 @@
-import Effect4.Machine.Witnesses
+import Effect4.Laws.Machine.Witnesses
 
 /-!
 # S1: enumerated invariants over the reference fiber machine
@@ -124,8 +124,8 @@ def syncAtoms : List ProgName :=
   , SyncOp.deferredAwaitCleanup ⟨0⟩ ⟨0⟩ 0
   , SyncOp.scopeMake FinalizerStrategy.sequential
   , SyncOp.scopeMake FinalizerStrategy.parallel
-  , SyncOp.scopeAdd 0 100 (FinName.release 1 false)
-  , SyncOp.scopeAdd 0 100 (FinName.release 1 true)
+  , SyncOp.scopeAdd 0 (FinName.release 1 false)
+  , SyncOp.scopeAdd 0 (FinName.release 1 true)
   , SyncOp.scopeRemove 0 100
   , SyncOp.scopeIsClosed 0
   ].map ProgName.syncOp
@@ -213,9 +213,9 @@ def forkFamily : List ProgName :=
     , ProgName.forkThen child immediateChild Supervision.ObserverMode.awaitValue
     , ProgName.forkThen child deferredChild Supervision.ObserverMode.awaitValue
     , ProgName.forkThen child scopedChild Supervision.ObserverMode.awaitValue
-    , ProgName.seqOf mkScope (ProgName.forkInScope child immediateChild 0 100)
-    , ProgName.seqOf mkScope (ProgName.forkInScope child deferredChild 0 100)
-    , ProgName.seqOf mkScope (ProgName.forkInScope child scopedChild 0 100)
+    , ProgName.seqOf mkScope (ProgName.forkInScope child immediateChild 0)
+    , ProgName.seqOf mkScope (ProgName.forkInScope child deferredChild 0)
+    , ProgName.seqOf mkScope (ProgName.forkInScope child scopedChild 0)
     ]
 
 /-- The scope-consuming programs, each behind the `scopeMake` that mints key `0`: the two
@@ -225,22 +225,22 @@ def scopeFamily : List ProgName :=
   [ ProgName.seqOf mkScope (ProgName.closeScopeOf 0 unitExit)
   , ProgName.seqOf mkScopePar (ProgName.closeScopeOf 0 unitExit)
   , ProgName.seqOf mkScope
-      (ProgName.seqOf (ProgName.syncOp (SyncOp.scopeAdd 0 100 (FinName.release 1 false)))
+      (ProgName.seqOf (ProgName.syncOp (SyncOp.scopeAdd 0 (FinName.release 1 false)))
         (ProgName.closeScopeOf 0 unitExit))
   , ProgName.seqOf mkScope
-      (ProgName.seqOf (ProgName.syncOp (SyncOp.scopeAdd 0 100 (FinName.release 1 true)))
+      (ProgName.seqOf (ProgName.syncOp (SyncOp.scopeAdd 0 (FinName.release 1 true)))
         (ProgName.closeScopeOf 0 unitExit))
   , ProgName.seqOf mkScopePar
-      (ProgName.seqOf (ProgName.syncOp (SyncOp.scopeAdd 0 100 (FinName.release 1 true)))
+      (ProgName.seqOf (ProgName.syncOp (SyncOp.scopeAdd 0 (FinName.release 1 true)))
         (ProgName.closeScopeOf 0 unitExit))
   , ProgName.seqOf mkScope
-      (ProgName.seqOf (ProgName.syncOp (SyncOp.scopeAdd 0 100 (FinName.parkThen 3)))
+      (ProgName.seqOf (ProgName.syncOp (SyncOp.scopeAdd 0 (FinName.parkThen 3)))
         (ProgName.closeScopeOf 0 unitExit))
   , ProgName.seqOf mkScope
-      (ProgName.seqOf (ProgName.forkInScope (ProgName.park 0) scopedChild 0 100)
+      (ProgName.seqOf (ProgName.forkInScope (ProgName.park 0) scopedChild 0)
         (ProgName.closeScopeOf 0 unitExit))
   , ProgName.seqOf mkScopePar
-      (ProgName.seqOf (ProgName.forkInScope (ProgName.park 0) scopedChild 0 100)
+      (ProgName.seqOf (ProgName.forkInScope (ProgName.park 0) scopedChild 0)
         (ProgName.closeScopeOf 0 unitExit))
   , ProgName.seqOf mkScope
       (ProgName.seqOf (ProgName.closeScopeOf 0 unitExit) (ProgName.closeScopeOf 0 unitExit))
@@ -264,6 +264,7 @@ def decisions : List D :=
   , RunDecision.answerAsync ⟨0⟩ 0 (Completion.ofExit (Exit.success Val.unit))
   , RunDecision.interruptFrom (some ⟨0⟩) ReasonAnnotations.empty ⟨1⟩
   , RunDecision.interruptFrom none ReasonAnnotations.empty ⟨0⟩
+  , RunDecision.advance 1
   ]
 
 /-- Every word of exactly `n` decisions. -/
@@ -313,8 +314,8 @@ def onExitCountOf (fin : FinName) : ProgName → Nat
   | ProgName.seqOf first second => onExitCountOf fin first + onExitCountOf fin second
   | ProgName.forkThen child _ _ => onExitCountOf fin child
   | ProgName.forkOnly child _ => onExitCountOf fin child
-  | ProgName.forkInScope child _ _ _ => onExitCountOf fin child
-  | ProgName.forkScopedOf child _ _ => onExitCountOf fin child
+  | ProgName.forkInScope child _ _ => onExitCountOf fin child
+  | ProgName.forkScopedOf child _ => onExitCountOf fin child
   | ProgName.awaitAllNew body => onExitCountOf fin body
   | _ => 0
 
@@ -327,8 +328,8 @@ def refMakeCount : ProgName → Nat
   | ProgName.seqOf first second => refMakeCount first + refMakeCount second
   | ProgName.forkThen child _ _ => refMakeCount child
   | ProgName.forkOnly child _ => refMakeCount child
-  | ProgName.forkInScope child _ _ _ => refMakeCount child
-  | ProgName.forkScopedOf child _ _ => refMakeCount child
+  | ProgName.forkInScope child _ _ => refMakeCount child
+  | ProgName.forkScopedOf child _ => refMakeCount child
   | ProgName.awaitAllNew body => refMakeCount body
   | _ => 0
 
@@ -480,9 +481,9 @@ the printable projection is the invariant index:
 
 #guard programs.length = 1432
 
-#guard tapes.length = 92
+#guard tapes.length = 112
 
-#guard runs = 131744
+#guard runs = 160384
 
 #guard report = []
 
@@ -509,7 +510,7 @@ battery's reporting path is shown to fire by a deliberately wrong invariant inst
 
 /-- The one-decision run of a bare `forkScoped` over the empty context. -/
 def s1FindingOne : M :=
-  replayWith fuel (ProgName.forkScopedOf (ProgName.value Val.unit) immediateChild 100)
+  replayWith fuel (ProgName.forkScopedOf (ProgName.value Val.unit) immediateChild)
     [RunDecision.evaluate ⟨0⟩]
 
 -- The machine does not get stuck and does not invent a scope: it fails the fiber with the
@@ -520,7 +521,7 @@ def s1FindingOne : M :=
 
 #guard exitOf s1FindingOne 0 = some (Exit.failure (Cause.die Defect.missingService))
 
-#guard brokenBy (ProgName.forkScopedOf (ProgName.value Val.unit) immediateChild 100)
+#guard brokenBy (ProgName.forkScopedOf (ProgName.value Val.unit) immediateChild)
   [RunDecision.evaluate ⟨0⟩] = []
 
 -- The reporting path is not vacuous: an invariant that demands what no run gives fails.

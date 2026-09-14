@@ -9,11 +9,11 @@
  *
  *     bun run <abs path>/harness/truth/run-truth.ts --manifest <corpus.json> [--out <dir>] [--timeout ms]
  *
- * Run it from `C:\Users\kokok\Dev\effect4-host` (the pinned installation) — `effect` resolves
- * through the `node_modules` junction `harness/truth/node_modules` → that installation's
- * `node_modules`, which `check-truth.ps1` creates; the cwd is not what resolves it.
+ * Effect resolves through `harness/truth/node_modules`, selected by
+ * `scripts/check-truth.sh`; the current working directory does not select it.
  *
- * Depends on `effect` (rc.112) and `./prelude.ts` (the atoms; part of the truth claim).
+ * Depends on `effect` (rc.112), `./prelude.ts` (the atoms; part of the truth claim) and
+ * `ts/eff/profile.gen.ts` (the atom set the self-test checks the prelude's table against).
  *
  * How rc.112 is observed — nothing is simulated, every hook is a documented rc.112 seam:
  *  - every primitive a fiber evaluates passes through `Tracer.Tracer`'s optional `context`
@@ -43,7 +43,8 @@
  *  - one alphabet: the compared schedule is `started`, `forked`, `parked`, `resumed`, `ran`,
  *    `exited <kind>` over fiber indices in first-seen order (root `0`, children in fork
  *    order) — `scheduled` rows are recorded on both faces and dropped from the verdict,
- *    because the Lean trace records the fork's scheduling but not the yield's (NOTES.md §5);
+ *    because the Lean trace records the fork's scheduling but not the yield's
+ *    (`Test/contracts/faces.contract.md` §4, quantifiers 2 and 5);
  *  - one entry decides the schedule, and it is the one that has a fiber: the compared rows
  *    are always the fork entry's, because `Api.run` — the Lean side of the comparison — is
  *    `runFork` plus the flush rounds, and `runForkWith` (`:5413-5438`) always constructs a
@@ -56,16 +57,30 @@
  *    compared. Nothing is masked — no row kind is dropped for any program, and the sync
  *    entry's rows are never substituted for the fork entry's (by construction:
  *    `compareSchedules` is called on `hostFork` alone);
- *  - exact where it can be: a success value and a `fail` payload are compared as JSON; a
- *    `die` and an `interrupt` are compared by kind, the payloads shown (the Lean defect
- *    alphabet has no host errors) (by construction, `compareExits`);
+ *  - exact where represented: success and Fail payloads are compared as JSON. A cause
+ *    containing a represented text/pair error defect is compared in full, so an altered or
+ *    absent defect payload cannot pass by kind. AsyncFiberError keeps its explicit marker.
+ *    Other host objects and interrupt payloads retain their stated diagnostic-only boundary;
+ *  - one pair for a host error, and it is the adapter's: a row whose error column is the
+ *    DB-15 pair projects at the adapter (`prelude.ts` `toPair`, DI-59), so the program's own
+ *    handler, the tape row and the Lean machine observe one value; this file's `taggedPair`
+ *    is that same `pairOf`, applied where a value in *value* position still needs it (a
+ *    caught error, a reason inside a reified exit) and where a row's error column is `never`.
+ *    A defect inside a recorded call is a `died` tape row, which Lean refuses to replay (by
+ *    construction);
  *  - the prelude is checked before any program runs (tested: `selfTest`).
  */
-import { Cause, Context, Effect, Exit, Scheduler, Tracer } from "effect"
+import { Cause, Context, Effect, Exit, Scheduler, Tracer, Schema } from "effect"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { pathToFileURL } from "node:url"
-import { selfTestCases } from "./prelude.ts"
+import { pairOf, selfTestCases, tape, type TapeCall } from "./prelude.ts"
+// The atom set the printed programs may mention, read rather than copied (DI-40). This is the
+// only file of the harness that reads the TypeScript estate's generated profile; the adapter
+// stays on `effect` alone so that every generated module type-checks against it and nothing
+// more (`harness/truth/tsconfig.json`).
+import { atomNames } from "../../ts/eff/profile.gen.ts"
+import { preludeInventoryFailures } from "./prelude-inventory.ts"
 
 // ---- rc.112 keys (internal/core.ts:31-61, internal/effect.ts:492, :3766, Ref.ts:21,
 // Deferred.ts:22, Exit.ts:20) ---------------------------------------------------------
@@ -108,31 +123,45 @@ interface Manifest { format: string; fuel: number; programs: Entry[] }
 const argv = process.argv.slice(2)
 const option = (name: string, fallback: string): string => {
   const index = argv.indexOf(name)
-  return index >= 0 && argv[index + 1] !== undefined ? argv[index + 1] : fallback
+  const value = index >= 0 ? argv[index + 1] : undefined
+  return value ?? fallback
 }
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"))
 const manifestPath = option("--manifest", path.join(here, "corpus.json"))
 const outDir = option("--out", here)
 const timeoutMs = Number(option("--timeout", "300"))
+/** Where the recorded tapes go (host rows step 6): one JSON Lines file per program that
+ * performed a package row, `<name>.jsonl`, beside a `.cut-from` sidecar. */
+const tapeDir = option("--tape-out", path.join(outDir, "tapes"))
 
 // ---- the prelude self-test ----------------------------------------------------------
-const selfTest = (): string[] =>
-  selfTestCases.flatMap(([name, apply, expected]) => {
+/** Two refusals. Every case of the prelude's table must hold, and every atom the profile
+ * names must have a case: `atomNames` is `Effect4.Program.nativeAtom`'s own list, cut into
+ * `ts/eff/profile.gen.ts` by `tools/Tools/TsGen.lean` and checked there against
+ * `nativeAtomTy` (DI-40). The second refusal is why `strings` is tested at all. */
+const selfTest = (): string[] => {
+  const failures = selfTestCases.flatMap(({ name, apply, expected }) => {
     const got = apply()
     return got === expected ? [] : [`${name}: got ${JSON.stringify(got)}, wanted ${JSON.stringify(expected)}`]
   })
+  failures.push(...preludeInventoryFailures(atomNames, selfTestCases))
+  return failures
+}
 
 // ---- generation ---------------------------------------------------------------------
+const cutFrom = argv.includes("--observe") || argv.includes("--self-test-errors") ? "" : fs.readFileSync(manifestPath + ".cut-from", "utf8").trimEnd()
 const importHeader = [
+  "// " + cutFrom,
   "// GENERATED by harness/truth/run-truth.ts from harness/truth/corpus.json — do not edit.",
-  "// Regenerate: harness/truth/check-truth.ps1",
-  "import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Scope } from \"effect\"",
-  "import { succ, pred, isZero, not, add, lt, eq, pair, fst, snd, incr, double, takeAndBump, zeroWhenPositive, noChange } from \"../prelude.ts\"",
+  "// Regenerate: scripts/check-truth.sh",
+  "import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from \"effect\"",
+  "import { succ, pred, isZero, not, add, lt, eq, pair, fst, snd, strings, causeIsFail, causeError, causeIsDie, causeIsInterrupt, or, and, incr, double, takeAndBump, zeroWhenPositive, noChange, Host, Sql, Kv } from \"../prelude.ts\"",
   ""
 ].join("\n")
 
-/** The module text: the exported declaration verbatim, or `export const main = <expr>` when
- * the manifest has no declaration (ill-typed: `printDecl` refuses, `print` does not). */
+/** The module text: the exported declaration block verbatim — one `export const L_<path>` per
+ * hoisted layer, `main` last (`printModule`) — or `export const main = <expr>` when the
+ * manifest has no declaration (ill-typed: `printDecl` refuses, `print` does not). */
 const moduleFor = (entry: Entry): { text: string; source: "decl" | "expr" } | null => {
   if (entry.decl !== null) return { text: importHeader + entry.decl, source: "decl" }
   if (entry.expr !== null) return { text: importHeader + `export const main = ${entry.expr}\n`, source: "expr" }
@@ -258,7 +287,8 @@ class Recorder {
     this.push(this.schedule, `ran ${owner}`)
   }
 
-  // ---- the value wire (NOTES.md §3) --------------------------------------------------
+  // ---- the value wire (the shape `harness/truth/Truth.lean` documents in its value-wire
+  // section and `Test/contracts/faces.contract.md` §4 quantifies) ---------------------------
   wire(value: unknown): Json {
     if (value === undefined || value === null) return null
     if (typeof value === "number") {
@@ -269,6 +299,11 @@ class Recorder {
     if (Array.isArray(value)) return value.map((item) => this.wire(item))
     if (typeof value === "object") {
       const record = value as Record<string, unknown>
+      // An external resource handle of any target: its index in first-seen order across every
+      // target, as the machine's one allocation list numbers them (`Stores.externals`).
+      if (typeof record["~effect4/ExternalHandle"] === "string") {
+        return { external: this.handle("external", value) }
+      }
       if (EXIT in record) return this.exitJson(value)
       if (FIBER in record) return { fiber: this.index.get(value) ?? this.handle("fiber?", value) }
       if (REF in record) return { ref: this.handle("ref", value) }
@@ -276,14 +311,29 @@ class Recorder {
       if (SCOPE in record) return { scope: this.handle("scope", value) }
       if (record._tag === "Some") return { some: this.wire(record.value) }
       if (record._tag === "None") return { none: true }
+      // a tagged host error in value position (a caught `SqlError`, a fail payload, a reason
+      // inside a reified exit): the `(_tag, message)` pair of DB-15, as the tape spells it
+      if (value instanceof Error && typeof record._tag === "string") return taggedPair(value)
+      // a `Context` (what a layer build answers, `Effect.context()`): `{"context":true}` on
+      // both faces (the join, 2026-09-07)
+      if (Context.isContext(value)) return { context: true }
     }
     throw new Error(`no wire form for ${describe(value)}`)
+  }
+
+  /** One tape row (host rows step 6): the calling fiber, the operation, the wired request and
+   * the wired answer, or the failure half (`failureOf`). */
+  tapeRow(call: TapeCall): TapeRow {
+    const base = { fiber: this.currentFiber(), op: call.op, request: this.wire(call.request) }
+    return Exit.isSuccess(call.exit)
+      ? { ...base, answer: this.wire(call.exit.value) }
+      : { ...base, ...failureOf(call.exit) }
   }
 
   reasonJson(reason: any): Json {
     switch (reason._tag) {
       case "Fail": return { fail: this.wire(reason.error) }
-      case "Die": return { die: Cause.isAsyncFiberError(reason.defect) ? "asyncFiber" : describe(reason.defect) }
+      case "Die": return { die: defectWire(reason.defect) }
       case "Interrupt": {
         const who = reason.fiberId
         if (who === undefined || who === null) return { interrupt: null }
@@ -305,6 +355,40 @@ const describe = (value: unknown): string => {
   try { return JSON.stringify(value) ?? String(value) } catch { return String(value) }
 }
 
+/** S2's represented defect image. The adapter already projects SQL failures through
+ * pairOf; a raw object here stays diagnostic rather than acquiring an invented Err value. */
+const defectWire = (defect: unknown): Json => {
+  if (Cause.isAsyncFiberError(defect)) return "asyncFiber"
+  if (typeof defect === "string") return { error: defect }
+  if (Array.isArray(defect) && defect.length === 2 && typeof defect[0] === "string" && typeof defect[1] === "string") {
+    return { error: [defect[0], defect[1]] }
+  }
+  return describe(defect)
+}
+
+/** The `(tag, message)` pair of DB-15 for a value in error position (ruling G1, 2026-09-09).
+ * **One rule, one function**: this is the adapter's own `pairOf` (`prelude.ts`, DI-59), so
+ * the value a program's handler observes and the value this file records cannot disagree.
+ * Since DI-59 the rows that can fail typed have already projected, and this call is the
+ * identity on their pair; it still runs for a value in *value* position (a caught error, a
+ * reason inside a reified exit) and for a row whose error column is `never`.
+ *
+ * The last resort `["?", …]` is the recorder's diagnostic, never a program's error: the
+ * adapter refuses an inadmissible shape as a defect before it can reach a fail payload
+ * (`toPair`), so a `"?"` on a `failed` tape row would itself be the finding. */
+const taggedPair = (e: unknown): [string, string] => {
+  const projected = pairOf(e)
+  return projected === null ? ["?", describe(e)] : [projected[0], projected[1]]
+}
+
+/** The outer tag of a two-level tagged error (`"SqlError"`), which `taggedPair` leaves to the
+ * row; `undefined` for anything else. Recorded beside a failed tape row, never read by Lean. */
+const outerTag = (e: unknown): string | undefined => {
+  if (e === null || typeof e !== "object" || typeof (e as any)._tag !== "string") return undefined
+  const reason = (e as any).reason
+  return reason !== null && typeof reason === "object" && typeof reason._tag === "string" ? (e as any)._tag : undefined
+}
+
 /** The kind of a wired exit, with the archived tracer's precedence: fail, interrupt, die. */
 const exitKindOf = (exit: Json): string => {
   if (exit === null || typeof exit !== "object" || Array.isArray(exit)) return "?"
@@ -317,10 +401,13 @@ const exitKindOf = (exit: Json): string => {
 }
 
 // ---- the scheduler of the async entry -------------------------------------------------
-class TracedScheduler extends Scheduler.MixedScheduler {
-  constructor(private readonly recorder: Recorder) { super("async") }
-  override makeDispatcher(): Scheduler.SchedulerDispatcher {
-    const inner = super.makeDispatcher()
+class TracedScheduler implements Scheduler.Scheduler {
+  readonly executionMode = "async"
+  private readonly inner = new Scheduler.MixedScheduler("async")
+  constructor(private readonly recorder: Recorder) {}
+  shouldYield: Scheduler.Scheduler["shouldYield"] = (fiber) => this.inner.shouldYield(fiber)
+  makeDispatcher(): Scheduler.SchedulerDispatcher {
+    const inner = this.inner.makeDispatcher()
     const owner = this.recorder.currentFiber()
     const recorder = this.recorder
     return {
@@ -343,6 +430,55 @@ const tracedContext = (recorder: Recorder, scheduler?: Scheduler.Scheduler) => {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
+// ---- the tape (host rows step 6) ---------------------------------------------------------
+/** One recorded package call: the calling fiber's index, the row's operation, the wired
+ * request, and the wired answer or the failure half. Rows are in call order; `Api.replay`
+ * consumes the answers in that order (single-fiber fixtures; decisions memo D5).
+ *
+ * The failure half: `failed`, the `(tag, message)` pair of DB-15 as `taggedPair` spells it, is
+ * what Lean replays as `Err.tagged`. Beside it, for the record only (Lean does not read it):
+ * `error`, the outer tag of a two-level error (`"SqlError"`), which the pair leaves to the row.
+ * `died` is any other cause — a defect, an interrupt — described; Lean's decoder refuses such
+ * a row, so a host defect is never replayed as a typed failure.
+ *
+ * The call is recorded **before** the adapter's projection (`Effect.mapError(…, toPair)` is
+ * applied outside `recorded`, `prelude.ts`), which is why the raw diagnostics still exist to
+ * record: `outerTag` reads the package's own error object. `taggedPair` and the adapter share
+ * `pairOf`, so `failed` is the value the program's handler saw, whichever side computes it
+ * (DI-59; scout A's Q2 asked which of the two orders to take, and this is the answer: the
+ * diagnostics are kept, and the tape bytes do not move). */
+interface TapeRow {
+  fiber: number; op: string; request: Json
+  answer?: Json
+  failed?: [string, string]; error?: string
+  died?: string
+}
+
+const failureOf = (exit: unknown): { failed: [string, string]; error?: string } | { died: string } => {
+  const reasons = ((exit as any)?.cause?.reasons ?? []) as Array<{ _tag: string; error?: unknown; defect?: unknown }>
+  const fail = reasons.find((r) => r._tag === "Fail")
+  if (fail === undefined) {
+    const die = reasons.find((r) => r._tag === "Die")
+    return { died: die === undefined ? `no Fail reason: ${JSON.stringify(reasons.map((r) => r._tag))}` : describe(die.defect) }
+  }
+  const row: { failed: [string, string]; error?: string } = { failed: taggedPair(fail.error) }
+  const outer = outerTag(fail.error)
+  if (outer !== undefined) row.error = outer
+  return row
+}
+
+const withoutTape = (observation: Observation): Omit<Observation, "tape"> => {
+  const { tape: _tape, ...rest } = observation
+  return rest
+}
+
+/** Install the tape sink for one run; every package call the prelude performs posts to it. */
+const recording = (recorder: Recorder): TapeRow[] => {
+  const rows: TapeRow[] = []
+  tape.sink = (call) => rows.push(recorder.tapeRow(call))
+  return rows
+}
+
 // ---- the two entries ------------------------------------------------------------------
 interface Observation {
   entry: "runSyncExit" | "runPromiseExit"
@@ -354,10 +490,13 @@ interface Observation {
   late: string[]
   /** `runSyncExit` only: the root's exit if it settled later on the microtask queue. */
   settledLater: Json | null
+  /** The package calls this run made, in order (empty for a program without host rows). */
+  tape: TapeRow[]
 }
 
 const runSyncEntry = async (main: any): Promise<Observation> => {
   const recorder = new Recorder()
+  const rows = recording(recorder)
   // `Effect.runSyncExitWith(context)` = `runSyncExitWith` (`internal/effect.ts:5536-5545`):
   // its own `MixedScheduler("sync")`, `runFork`, one flush of the root's dispatcher, then
   // the exit or the `AsyncFiberError` defect.
@@ -365,6 +504,7 @@ const runSyncEntry = async (main: any): Promise<Observation> => {
   const wired = recorder.exitJson(exit)
   recorder.freeze()
   await sleep(20)
+  tape.sink = null
   const root = [...recorder.index.entries()].find(([, idx]) => idx === 0)?.[0] as FiberLike | undefined
   const rootExit = root !== undefined && recorder.exits.has(0) ? recorder.exitJson(recorder.exits.get(0)) : null
   const settledLater = exitKindOf(wired) === "die" && (wired as any).failure.reasons.some((r: any) => r.die === "asyncFiber")
@@ -372,12 +512,13 @@ const runSyncEntry = async (main: any): Promise<Observation> => {
     : null
   return {
     entry: "runSyncExit", exit: wired, parked: false, schedule: recorder.schedule, events: recorder.events,
-    frames: recorder.frames, late: recorder.late, settledLater
+    frames: recorder.frames, late: recorder.late, settledLater, tape: rows
   }
 }
 
 const runPromiseEntry = async (main: any): Promise<Observation> => {
   const recorder = new Recorder()
+  const rows = recording(recorder)
   const scheduler = new TracedScheduler(recorder)
   // `runPromiseExitWith` (`internal/effect.ts:5494-5505`) is `runForkWith(context)` plus one
   // observer; spelled out here so the deadline can interrupt the leftover fiber (`:574`).
@@ -389,14 +530,16 @@ const runPromiseEntry = async (main: any): Promise<Observation> => {
   if (first === deadline) {
     fiber.interruptUnsafe()
     await settled
+    tape.sink = null
     return {
       entry: "runPromiseExit", exit: null, parked: true, schedule: recorder.schedule, events: recorder.events,
-      frames: recorder.frames, late: recorder.late, settledLater: null
+      frames: recorder.frames, late: recorder.late, settledLater: null, tape: rows
     }
   }
+  tape.sink = null
   return {
     entry: "runPromiseExit", exit: recorder.exitJson(first), parked: false, schedule: recorder.schedule,
-    events: recorder.events, frames: recorder.frames, late: recorder.late, settledLater: null
+    events: recorder.events, frames: recorder.frames, late: recorder.late, settledLater: null, tape: rows
   }
 }
 
@@ -404,7 +547,10 @@ const runPromiseEntry = async (main: any): Promise<Observation> => {
 const deepEqual = (a: Json, b: Json): boolean => JSON.stringify(a) === JSON.stringify(b)
 
 const failPayloads = (exit: Json): Json[] =>
-  (((exit as any)?.failure?.reasons ?? []) as Array<Record<string, Json>>).filter((r) => "fail" in r).map((r) => r.fail)
+  (((exit as any)?.failure?.reasons ?? []) as Array<Record<string, Json>>).flatMap((r) => {
+    const payload = r.fail
+    return payload === undefined ? [] : [payload]
+  })
 
 /** The Lean verdict of `Api.run`: an exit, a park (frontier with the root parked), or a
  * frontier with the root live and unparked — the compile stopped (`acquireRelease`,
@@ -426,6 +572,26 @@ const renderExit = (exit: Json | null): string => {
 
 interface Comparison { agree: boolean; note: string }
 
+const failureReasons = (exit: Json | null): Array<Record<string, Json>> =>
+  (((exit as any)?.failure?.reasons ?? []) as Array<Record<string, Json>>)
+
+const hasRepresentedErrorDefect = (exit: Json | null): boolean =>
+  failureReasons(exit).some((reason) => {
+    const defect = reason.die
+    return defect !== null && typeof defect === "object" && !Array.isArray(defect) && "error" in defect
+  })
+
+const isAsyncFiberExit = (exit: Json | null): boolean =>
+  failureReasons(exit).some((reason) => reason.die === "asyncFiber")
+
+/** Exact observed causes whenever either face claims a represented error defect. This
+ * runs before Fail precedence too, so a mixed cause cannot hide an altered Die payload. */
+const compareRepresentedDefects = (lean: Json | null, host: Json | null): Comparison | undefined => {
+  if (!hasRepresentedErrorDefect(lean) && !hasRepresentedErrorDefect(host)) return undefined
+  const same = deepEqual(failureReasons(lean), failureReasons(host))
+  return { agree: same, note: same ? "same represented-defect cause" : "represented-defect cause differs" }
+}
+
 const compareExits = (lean: { kind: string; exit: Json | null }, host: Observation): Comparison => {
   if (lean.kind === "parked") {
     return host.parked
@@ -436,6 +602,8 @@ const compareExits = (lean: { kind: string; exit: Json | null }, host: Observati
   if (host.parked) return { agree: false, note: "rc.112 parks, Lean settles" }
   const hostKind = exitKindOf(host.exit!)
   if (hostKind !== lean.kind) return { agree: false, note: `kind: Lean ${lean.kind}, rc.112 ${hostKind}` }
+  const represented = compareRepresentedDefects(lean.exit, host.exit)
+  if (represented !== undefined) return represented
   if (lean.kind === "success") {
     const same = deepEqual((lean.exit as any).success, (host.exit as any).success)
     return { agree: same, note: same ? "same value" : "same kind, values differ" }
@@ -445,6 +613,37 @@ const compareExits = (lean: { kind: string; exit: Json | null }, host: Observati
     return { agree: same, note: same ? "same fail payloads" : "same kind, fail payloads differ" }
   }
   return { agree: true, note: `same kind (${lean.kind}); payloads compared by eye` }
+}
+
+/** Pure independent controls; no Effect is run and no manifest/tape is rewritten. */
+const selfTestErrors = (): number => {
+  const die = (payload: Json): Json => ({ failure: { reasons: [{ die: payload }] } })
+  const fail = (payload: Json): Json => ({ failure: { reasons: [{ fail: payload }] } })
+  const observation = (exit: Json): Observation => ({ entry: "runPromiseExit", exit, parked: false,
+    schedule: [], events: [], frames: [], late: [], settledLater: null, tape: [] })
+  const agrees = (lean: Json, host: Json): boolean =>
+    compareExits({ kind: exitKindOf(lean), exit: lean }, observation(host)).agree
+  const sql = die({ error: ["UnknownError", "no such table: missing"] })
+  const changedMessage = die({ error: ["UnknownError", "a different SQL message"] })
+  const mixed = (message: string): Json => ({ failure: { reasons: [
+    { fail: ["Expected", "same failure"] }, { die: { error: message } }
+  ] } })
+  const cases: Array<[string, boolean]> = [
+    ["pSqlOrDie exact pair", agrees(sql, sql)],
+    ["pSqlOrDie changed message rejected", !agrees(sql, changedMessage)],
+    ["pSqlOrDie missing payload rejected", !agrees(sql, die("diagnostic only"))],
+    ["text defect exact", agrees(die({ error: "lost" }), die(defectWire("lost")))],
+    ["text defect changed message rejected", !agrees(die({ error: "lost" }), die(defectWire("found")))],
+    ["mixed cause changed defect rejected", !agrees(mixed("lost"), mixed("found"))],
+    ["raw boom differs from text boom", !agrees(fail({ boom: null }), fail("boom"))],
+    ["text boom remains text", agrees(fail("boom"), fail("boom"))],
+    ["pair projection exact", deepEqual(defectWire(["SqlError", "boom"]), { error: ["SqlError", "boom"] })],
+    ["unsupported object remains diagnostic", typeof defectWire({ _tag: "SqlError", message: "boom" }) === "string"],
+    ["text asyncFiber is not the runtime marker", !isAsyncFiberExit(die(defectWire("asyncFiber")))]
+  ]
+  const failures = cases.filter(([, pass]) => !pass).map(([name]) => name)
+  console.log(JSON.stringify({ kind: "pure-error-comparison-controls", checks: cases.length, failures }))
+  return failures.length === 0 ? 0 : 1
 }
 
 const isScheduledRow = (row: string) => row.startsWith("scheduled ")
@@ -516,13 +715,9 @@ const main = async (): Promise<number> => {
     // The sync entry always, for the `runSync` column.
     const hostSync = await runSyncEntry(program)
     const leanSyncKind = entry.runSync.exitKind
-    const hostSyncKind = exitKindOf(hostSync.exit!)
-    let runSyncAgree = leanSyncKind === hostSyncKind
-    if (runSyncAgree && leanSyncKind === "success") runSyncAgree = deepEqual((entry.runSync.exit as any).success, (hostSync.exit as any).success)
+    let runSyncAgree = compareExits({ kind: leanSyncKind, exit: entry.runSync.exit }, hostSync).agree
     if (runSyncAgree && leanSyncKind === "die") {
-      const leanAsync = JSON.stringify(entry.runSync.exit).includes("\"asyncFiber\"")
-      const hostAsync = JSON.stringify(hostSync.exit).includes("\"asyncFiber\"")
-      runSyncAgree = leanAsync === hostAsync
+      runSyncAgree = isAsyncFiberExit(entry.runSync.exit) === isAsyncFiberExit(hostSync.exit)
     }
     if (hostSync.settledLater !== null) notes.push(`runSyncExit: AsyncFiberError, then the fiber settled on the microtask queue: ${renderExit(hostSync.settledLater)}`)
 
@@ -546,6 +741,16 @@ const main = async (): Promise<number> => {
     const schedule = compareSchedules(entry.run.schedule, hostFork.schedule)
     if (!schedule.agree) notes.push(`schedule ${schedule.note}`)
     if (hostFork.parked) notes.push("rc.112: no exit before the deadline; the fiber was then interrupted")
+    // The tape (host rows step 6): the fork entry's calls, the ones the compared schedule made,
+    // written as JSON Lines with the manifest's stamp beside them; the sync entry's calls must
+    // be the same, or the fixture is not deterministic.
+    if (hostFork.tape.length > 0) {
+      fs.mkdirSync(tapeDir, { recursive: true })
+      fs.writeFileSync(path.join(tapeDir, `${entry.name}.jsonl`), hostFork.tape.map((row) => JSON.stringify(row)).join("\n") + "\n")
+      fs.writeFileSync(path.join(tapeDir, `${entry.name}.jsonl.cut-from`), cutFrom + "\n")
+      notes.push(`tape: ${hostFork.tape.length} calls`)
+      if (JSON.stringify(hostSync.tape) !== JSON.stringify(hostFork.tape)) notes.push("the runSyncExit entry's tape differs from the runFork entry's")
+    }
     rows.push({
       program: entry.name, leanExit: lean.text, hostExit: host.parked ? "parked (deadline)" : renderExit(host.exit),
       entry: host.entry, exitAgree: exits.agree, scheduleAgree: schedule.agree, runSyncAgree, notes, host: hostFork, hostSync
@@ -575,17 +780,45 @@ const main = async (): Promise<number> => {
     bun: typeof Bun !== "undefined" ? Bun.version : null,
     timeoutMs,
     summary,
+    // The tape is its own artefact (`tapes/<name>.jsonl`); the persisted observation keeps
+    // the shape it had before step 6.
     rows: rows.map((r) => ({
       ...r,
-      host: r.host && { ...r.host },
-      hostSync: r.hostSync && { ...r.hostSync }
+      host: r.host && withoutTape(r.host),
+      hostSync: r.hostSync && withoutTape(r.hostSync)
     }))
   }
+  fs.writeFileSync(path.join(outDir, "result.json.cut-from"), cutFrom + "\n")
   fs.writeFileSync(path.join(outDir, "result.json"), JSON.stringify(result, null, 2) + "\n")
   fs.writeFileSync(path.join(outDir, "result.md"),
-    `<!-- GENERATED by harness/truth/run-truth.ts — do not edit. Regenerate: harness/truth/check-truth.ps1 -->\n\n` +
+    `<!-- ${cutFrom} -->\n<!-- GENERATED by harness/truth/run-truth.ts — do not edit. Regenerate: scripts/check-truth.sh -->\n\n` +
     `effect ${result.effect}, bun ${result.bun}, deadline ${timeoutMs} ms\n\n${table}\n\n${summary}\n`)
   return disagreements.length === 0 ? 0 : 1
 }
 
-process.exitCode = await main()
+/** One original or printed module, through the identical recorder used above.
+ * The parent bounds module initialization as well as this recorder's fiber deadline.
+ * No generated manifest is read or rewritten in this observation mode. */
+const observeModule = async (): Promise<number> => {
+  const output = option("--result", "")
+  if (!output) throw new Error("--observe requires --result")
+  try {
+    const version = Schema.decodeUnknownSync(Schema.Struct({ version: Schema.Literal("4.0.0-rc.112") }))(JSON.parse(fs.readFileSync(path.join(here, "node_modules/effect/package.json"), "utf8"))).version
+    if (version !== "4.0.0-rc.112") throw new Error(`runtime pin drift: ${version}`)
+    const failures = selfTest()
+    if (failures.length) throw new Error(failures.join("; "))
+    const loaded = await import(pathToFileURL(path.resolve(option("--observe", ""))).href)
+    const value = loaded[option("--unit", "main")]
+    if (!Effect.isEffect(value)) throw new Error("selected original unit is not an Effect")
+    const observation = await runPromiseEntry(value)
+    fs.writeFileSync(output, JSON.stringify({ status: "observed", effect: version, timeoutMs, observation }) + "\n")
+    return 0
+  } catch (error) {
+    fs.writeFileSync(output, JSON.stringify({ status: "could-not-run", error: describe(error) }) + "\n")
+    return 2
+  }
+}
+
+if (argv.includes("--self-test-errors")) process.exitCode = selfTestErrors()
+else if (argv.includes("--observe")) process.exit(await observeModule())
+else process.exitCode = await main()
