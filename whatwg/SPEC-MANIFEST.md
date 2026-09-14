@@ -27,8 +27,9 @@ authored input.
 | WHATWG Infra Standard source | `whatwg/infra` commit `3f984adcd24a6d5c53cc26b3e737701808003f3e`, 2026-07-17, "Review Draft Publication: July 2026"; `infra.bs` SHA-256 `7c38e6e25ef21f536142cfc6d94954c41bc9889cd0b6fd67ab34571215acd8eb`; CC-BY 4.0 | semantic authority for `Whatwg.Infra`, the value universe (Stratum V); pinned at W5, no dispositions yet |
 | WHATWG HTML Standard source | `whatwg/html` commit `746f2ede8a56bc01204e0f9cc23da33b37c6fbab`, 2026-07-17, "Review Draft Publication: July 2026"; `source` SHA-256 `c985a14d1871fe862de386f5af92b5da84068267c6095ef0379c069ae85f9cde`, 7,891,297 bytes; CC-BY 4.0 | semantic owner of the HTML content model for `Whatwg.Html`; pinned at H0 of `docs/HTML-PACKAGE-PLAN.md`, no dispositions yet |
 | TyXML 4.6.0 | `ocsigen/tyxml` commit `d2916535536f2134bad7793a598ba5b7327cae41` (tag `4.6.0`, 2023-09-27); `lib/**`, `syntax/reflect/**`, licenses; LGPL-2.1 with linking exception; `html_types.mli` SHA-256 `0031c56d5bcc048b11ba47fd4d840235bfc52ced9722269510818c14004b3df3`, `html_sigs.mli` `5cf48b32cc19f4c9b400f388a749b1a8c0f4e5b058ae88e21ca568a899622f9b` | retired 2026-09-06: the transcription source from which the `Whatwg.Html.Schema` modules were first generated at H2; the pin, projection and drift gate are removed and the schema is authored source under the HTML Standard alone (ruling HP-1, HP-10 as amended) |
-| Web IDL Standard source | `whatwg/webidl` commit `a652053f1e74e4aaf647528deb174012ed6c909f`, 2026-03-16, "Review Draft Publication: March 2026"; `index.bs` SHA-256 `3c401f1eade4b56fc674e9bb86344d452f8854433bc48f0e28e354280d43dc83`, 695,845 bytes; CC-BY 4.0 | semantic owner of the specification-level promise operations every WHATWG algorithm uses ("a new promise", "resolve", "reject", "react", "wait for all", "mark as handled") and of the exception kinds and conversions the `hostOnly` boundary names; library root `Whatwg.WebIdl` (ruling DB-11); pinned 2026-09-06 for P8; the section dispositions below seed `census/webidl/`, and `docs/PROMISE-PACKAGE-PLAN.md` owns the lane's slices, fences and commands; the census is generated and drift-checked by `lake exe census --standard <key>` since the Q1 landing of 2026-09-07 (Web IDL 121 rows, denominator 112; ES2026 77 rows, denominator 74), with an all-absent generated row list and no authored theorem numerator or coverage report yet |
-| ECMAScript Language Specification, ES2026 | `tc39/ecma262` commit `0248456c758431e4bb8e5d26333ff1865123c9cd` (tag `es2026`, 2026-03-31); `spec.html` SHA-256 `ce7bc30174061fd8d212270b81cf6511661180c1e174f6911d10ced0581527b0`, 2,978,793 bytes; Ecma license in `LICENSE.md` | semantic owner of Promise objects, their internal slots, PromiseReaction and PromiseCapability records, `NewPromiseReactionJob`, `HostEnqueuePromiseJob` and the job abstraction that DB-03 models as deterministic FIFO state; not a WHATWG standard, the language beneath the platform; library root `Whatwg.Ecma262` (ruling DB-11); pinned 2026-09-06 for P8; the clause dispositions below seed `census/ecma262/`, and `docs/PROMISE-PACKAGE-PLAN.md` owns the lane's slices, fences and commands; the census is generated and drift-checked by `lake exe census --standard <key>` since the Q1 landing of 2026-09-07 (Web IDL 121 rows, denominator 112; ES2026 77 rows, denominator 74), with an all-absent generated row list and no authored theorem numerator or coverage report yet |
+| Web IDL Standard source | `whatwg/webidl` commit `a652053f1e74e4aaf647528deb174012ed6c909f`, 2026-03-16, "Review Draft Publication: March 2026"; `index.bs` SHA-256 `3c401f1eade4b56fc674e9bb86344d452f8854433bc48f0e28e354280d43dc83`, 695,845 bytes; CC-BY 4.0 | semantic owner of the specification-level promise operations every WHATWG algorithm uses ("a new promise", "resolve", "reject", "react", "wait for all", "mark as handled") and of the exception kinds and conversions the `hostOnly` boundary names; library root `Whatwg.WebIdl` (ruling DB-11); pinned 2026-09-06 for P8; the section dispositions below seed `census/webidl/`, and `docs/PROMISE-PACKAGE-PLAN.md` owns the lane's slices, fences and commands; the census is generated and drift-checked by `lake exe census --standard <key>` since the Q1 landing of 2026-09-07 (Web IDL 124 rows, denominator 116; ES2026 77 rows, denominator 75, as amended by the Q2 addenda of 2026-09-07), with an all-absent generated row list, an all-absent Lean numerator per standard, and a coverage report that prints owned-with-green 0/116 and 0/75 since the Q2 landing of 2026-09-07 |
+| WHATWG Encoding Standard source | `whatwg/encoding` commit `67494fceee1b95bbc87b58142fcc14e48310f257`, 2025-06-16, "Review Draft Publication: June 2025"; `encoding.bs` SHA-256 `43cb027a611580ad07b5cd3a96e82ee4303594e6b24b8b7c5b903cd2e50f19ad`, 144,545 bytes; CC-BY 4.0 | semantic owner of the UTF-8 encoder and decoder (Stratum V, RS-1; the natural home is `Whatwg.Infra.Text.Codec`, which today owns only isomorphic and ASCII conversions), of "get an encoder", "encode or fail", the I/O queue and "UTF-8 decode without BOM (or fail)" that the URL Standard's percent-encoding, host parsing, rendering and form-encoding rows call; the legacy encoders stay foreign profiles; pinned 2026-09-07 at the URL U3 freeze, which found no owner for UTF-8 encode in this repository; no census, dispositions or declarations yet |
+| ECMAScript Language Specification, ES2026 | `tc39/ecma262` commit `0248456c758431e4bb8e5d26333ff1865123c9cd` (tag `es2026`, 2026-03-31); `spec.html` SHA-256 `ce7bc30174061fd8d212270b81cf6511661180c1e174f6911d10ced0581527b0`, 2,978,793 bytes; Ecma license in `LICENSE.md` | semantic owner of Promise objects, their internal slots, PromiseReaction and PromiseCapability records, `NewPromiseReactionJob`, `HostEnqueuePromiseJob` and the job abstraction that DB-03 models as deterministic FIFO state; not a WHATWG standard, the language beneath the platform; library root `Whatwg.Ecma262` (ruling DB-11); pinned 2026-09-06 for P8; the clause dispositions below seed `census/ecma262/`, and `docs/PROMISE-PACKAGE-PLAN.md` owns the lane's slices, fences and commands; the census is generated and drift-checked by `lake exe census --standard <key>` since the Q1 landing of 2026-09-07 (Web IDL 124 rows, denominator 116; ES2026 77 rows, denominator 75, as amended by the Q2 addenda of 2026-09-07), with an all-absent generated row list, an all-absent Lean numerator per standard, and a coverage report that prints owned-with-green 0/116 and 0/75 since the Q2 landing of 2026-09-07 |
 | Streams reference implementation | same commit, `reference-implementation/`; dual CC0 / MIT | second-tier evidence: candidate realizer and reading aid |
 | Web Platform Tests `streams/` | `web-platform-tests/wpt` commit `480fdfcd85d043c23875665f464c35c0043dff52`, 2026-09-02; BSD-3-Clause | host conformance corpus |
 | Node | v22.23.2 on Windows 11 x86-64 | local host profile via `node:stream/web` |
@@ -79,7 +80,10 @@ are `op`; its `<pre class=idl>` statements are `idl`; a standalone `<dfn>`
 becomes `idl`, `type` or `op` by its Bikeshed dfn type (`attribute`, `const`
 and `constructor` fold into the IDL-block rows, `exception` is a `type`, the
 rest are `op`); the six derived-interface bullets are authored `rule` rows
-carrying disposition `requirement`; no `slot` rows are emitted (ruling R-P4).
+carrying disposition `requirement`, and slice Q2 adds three more authored
+`rule` rows: `DOMException`'s serialization and deserialization steps, both
+`owned`, and `rule.promise-to-js`, `hostOnly`; no `slot` rows are emitted
+(ruling R-P4).
 
 The ECMA-262 census adds seven kinds, used by no other standard, because the
 distinction between an abstract operation, a host hook and a built-in function
@@ -180,25 +184,28 @@ itself is frozen input: `census/webidl/sections.tsv` carries the heading ids
 and widening it is a contract change, not a convenience
 (`docs/PROMISE-PACKAGE-PLAN.md`, slice Q1). Offsets are 0-based byte offsets
 into `vendor/whatwg-webidl-a652053f/index.bs`, ends exclusive. The row counts
-are the survey's proposal; the generated census owns every count once it
-exists, and none of these numbers is coverage.
+below are no longer the survey's proposal: they are the frozen census that
+landed on 2026-09-07 and amended by slice Q2 the same day, 124 rows with denominator 116 and 8 excluded, owned by
+`generated/webidl-census.tsv` and drift-checked by
+`lake exe census --standard webidl`. None of these numbers is coverage; every
+row is `absent`.
 
 | Section id | Span | Rows in scope | Disposition |
 | --- | --- | --- | --- |
 | `idl-exceptions` (lead) | 193957–198581 | 9 definitions: `exception`, `simple exception`, the five simple exception types, `create`, `throw` | `owned`: the first-order exception universe `Whatwg.WebIdl.Exceptions` is reserved for |
-| `idl-DOMException-error-names` | 198581–211138 | 32 error-name definitions; 22 legacy `const` members | names `owned` (the closed universe every WHATWG algorithm draws from); the `idl` const rows `hostOnly` |
+| `idl-DOMException-error-names` | 198581–211138 | 33 rows: 32 error-name `type` rows and the names table itself, `op.dfn-error-names-table` (198659–198938). No `const` row is in this section; the 25 legacy `const` members are `idl` rows of `idl-DOMException` (673892–675042) | all 33 `owned` (ruling R-P10: one definition row per name, the closed universe every WHATWG algorithm draws from, carried as data by `Whatwg.WebIdl.Exceptions`) |
 | `idl-DOMException-derived-interfaces` | 211138–213283 | 6 authored `rule` rows, bullets at 211607, 211775, 211922, 212162, 212319, 212508 | `requirement`: `must`/`should` constraints with no algorithm, realized by `QuotaExceededError` |
-| `idl-DOMException-derived-predefineds` | 213283–217551 | 3 algorithm blocks, 5 definitions, the `QuotaExceededError` IDL block | `hostOnly`; no Streams algorithm reaches the name. Flagged: `evidenceOnly` is arguable since it is the worked instance of the six requirements above it |
+| `idl-DOMException-derived-predefineds` | 213283–217551 | 12 rows: 7 `idl` rows from the `QuotaExceededError` and `QuotaExceededErrorOptions` blocks, and 5 `op` rows — the associated `quota` and `requested` (both at 214367–214571), the constructor steps (214573–215831), and the serialization (216470–216860) and deserialization (216862–217258) steps | `hostOnly`; no Streams algorithm reaches the name. Ruling R-P10 settles the section for the whole of it, so the earlier flag that `evidenceOnly` was arguable is withdrawn |
 | `idl-promise` | 252146–252819 | the heading-borne `Promise` interface-type definition and `dfn-promise-type` | `hostOnly` (ruling R-P4), overriding the survey's recommendation of `owned`: it is a type-system entry, and the binding layer is `hostOnly` |
-| `js-promise` (lead) | 346519–347497 | `js-to-promise` (346692–347209) and the reverse conversion | `hostOnly`: binding-layer conversions |
+| `js-promise` (lead) | 346519–347497 | 2 rows: `op.js-to-promise` (346692–347209) and the authored `rule.promise-to-js` (347211–347495), the reverse conversion, added by slice Q2 in answer to review debt D5 | `hostOnly`: binding-layer conversions |
 | `js-promise-manipulation` | 347497–356716 | the 11 promise operations | `owned`: the verbs DB-11 places in `Whatwg.WebIdl`; Streams invokes them 197 times |
 | `js-promise-examples` | 356716–364590 | 7 example algorithm blocks and 1 definition, all inside `<div class="example">` | `evidenceOnly` |
 | `js-exceptions` (lead) | 663547–663610 | none | no row source; 63 bytes of heading |
 | `js-DOMException-specialness` | 663610–664320 | none | `hostOnly`: what the JavaScript binding does to the `DOMException` prototype |
 | `js-exception-objects` | 664320–664612 | 1 heading-borne definition | `hostOnly`: which host object represents each exception kind |
 | `js-creating-throwing-exceptions` | 664612–669093 | 4 algorithm blocks | `owned`: what gives `create` and `throw` their meaning |
-| `js-handling-exceptions` | 669093–671837 | 1 definition plus a JavaScript example | `evidenceOnly`: the propagation rule is ECMA-262's |
-| `idl-DOMException` | 673398–677113 | the heading-borne interface definition, 30 IDL statements, 6 definitions | `idl` rows `hostOnly`; the associated `name` and `message` and the constructor and getter steps `owned` |
+| `js-handling-exceptions` | 669093–671837 | 1 definition plus a JavaScript example | `hostOnly` (slice Q2, review debt D4): the section's one row `op.an-exception-was-thrown` (669437–669665) is an exported normative `<dfn>` under the `must` that requires propagation, so it is a host obligation inside the denominator, not an example. The propagation sentence itself (669183–669435) still carries no row. |
+| `idl-DOMException` | 673398–677113 | 35 rows: `type.idl-dom-exception` (673398–673477), the heading-borne interface definition; 30 `idl` rows from the one IDL block, being the interface statement, the constructor and the three attributes (673588–673888) and the 25 legacy `const` members (673892–675042); and two `op` rows, `op.dom-exception-name` and `op.dom-exception-message`, both anchored at 675214–675370 | the `type` row and all 30 `idl` rows `hostOnly`; the two `op` rows `owned`, the associated `name` and `message` being the first-order content `Whatwg.WebIdl.Exceptions` carries. The constructor steps and the three getter steps carry no row of their own: their `constructor` and `attribute` dfns fold into the IDL-block rows under R-P2, and those rows are `hostOnly`. The serialization and deserialization steps enter as the two authored `rule` rows `rule.domexception-serialization-steps` (676192–676691) and `rule.domexception-deserialization-steps` (676693–677111), both `owned` (slice Q2, review debt D3): they are steps of the interface over the same associated `name` and `message` the two `op` rows carry, and they are neither `idl` rows nor the interface type |
 
 `mark a promise as handled` is `owned` although the pinned Streams source
 invokes it zero times (ruling R-P4): it is a promise verb DB-11 names, and an
@@ -224,18 +231,18 @@ ends exclusive.
 | Clause id | § | Rows | Disposition |
 | --- | --- | --- | --- |
 | `sec-jobs` | 9.5 | `clause.jobs` and its four requirement bullets (625769, 626257, 626357, 626486) | `requirement`: constraints on any host scheduler, realized by the FIFO queue in `Whatwg.Ecma262.Jobs` under DB-03 |
-| `sec-jobcallback-records` | 9.5.1 | `record.job-callback-record`, 2 fields | the record and `[[HostDefined]]` `foreignBoundary`; `[[Callback]]` `owned` |
+| `sec-jobcallback-records` | 9.5.1 | `record.jobcallback-records` (628436–630247) and its 2 fields, `field.jobcallback-records.Callback` (629684–629930) and `field.jobcallback-records.HostDefined` (629941–630193) | the record and `[[HostDefined]]` `foreignBoundary`; `[[Callback]]` `owned` |
 | `sec-hostmakejobcallback`, `sec-hostcalljobcallback` | 9.5.2–3 | 2 hooks, 1 requirement bullet each | `foreignBoundary`: host state and re-entry into user code |
 | `sec-hostenqueuegenericjob`, `sec-hostenqueuetimeoutjob` | 9.5.4, 9.5.6 | 2 hooks | `foreignBoundary`: no in-scope caller, and wall-clock scheduling is not FIFO state |
 | `sec-hostenqueuepromisejob` | 9.5.5 | 1 hook, 3 requirement bullets | the hook and the ordering bullet (634739–634841) `requirement`, realized by the FIFO queue (ruling R-P5); the realm-preparation and active-script bullets `foreignBoundary` |
-| `sec-promise-objects`, `sec-promise-abstract-operations`, `sec-promise-jobs` | 27.2, 27.2.1, 27.2.2 | 3 structural clauses | `evidenceOnly`: the settled/resolved vocabulary and two headings |
+| `sec-promise-objects`, `sec-promise-abstract-operations`, `sec-promise-jobs` | 27.2, 27.2.1, 27.2.2 | 3 structural clauses | `sec-promise-objects` `owned` (slice Q2, review debt D4): its own prose is the fulfilled/rejected/pending and settled/resolved/unresolved vocabulary that `Whatwg.Ecma262.Promise.State` realizes under R-P13. `sec-promise-abstract-operations` and `sec-promise-jobs` stay `evidenceOnly`: bare headings whose own prose is a section title. |
 | `sec-promisecapability-records`, `sec-promisereaction-records` | 27.2.1.1–2 | 2 records, 6 fields | `owned`: DB-11 puts both records in `Whatwg.Ecma262` |
 | `sec-ifabruptrejectpromise` | 27.2.1.1.1 | 1 op | `owned`: a shorthand whose six-step expansion is the theorem |
 | `sec-createresolvingfunctions`, `sec-fulfillpromise`, `sec-newpromisecapability`, `sec-ispromise`, `sec-rejectpromise`, `sec-triggerpromisereactions` | 27.2.1.3–8 | 6 ops | `owned`: first-order state transitions over the promise slots |
 | `sec-host-promise-rejection-tracker` | 27.2.1.9 | 1 hook | `foreignBoundary`: host bookkeeping with no stated observable effect |
 | `sec-newpromisereactionjob`, `sec-newpromiseresolvethenablejob` | 27.2.2.1–2 | 2 ops | `owned`; the thenable `then` call of the second is a boundary step inside an owned row |
 | `sec-promise-constructor`, `sec-properties-of-the-promise-constructor`, `sec-properties-of-the-promise-prototype-object` | 27.2.3, 27.2.4, 27.2.5 | 3 structural clauses | `hostOnly`: global-object and prototype plumbing |
-| `sec-promise-executor` | 27.2.3.1 | `builtin.promise` | `owned`, with its `NewTarget` and `OrdinaryCreateFromConstructor` steps left to the host object model |
+| `sec-promise-executor` | 27.2.3.1 | `builtin.promise-executor` (2708413–2711495) | `owned`, with its `NewTarget` and `OrdinaryCreateFromConstructor` steps left to the host object model |
 | `sec-promise.all`, `.allsettled`, `.any`, `.race`, `.reject`, `.resolve`, `.try`, `.withResolvers` | 27.2.4.1–9 | 8 built-ins | `owned`: the combinator semantics, with the iterator protocol as a named boundary |
 | `sec-getpromiseresolve`, `sec-performpromiseall`, `sec-performpromiseallsettled`, `sec-performpromiseany`, `sec-performpromiserace`, `sec-promise-resolve` | 27.2.4.1.1–27.2.4.7.1 | 6 ops | `owned` |
 | `sec-promise.prototype`, `sec-promise.prototype.constructor`, `sec-promise.prototype-%symbol.tostringtag%` | 27.2.4.4, 27.2.5.2, 27.2.5.5 | 3 properties | `hostOnly`: property descriptors |
@@ -245,20 +252,30 @@ ends exclusive.
 | `sec-properties-of-promise-instances` | 27.2.6 | 1 clause, 5 slots | `owned`: the promise carrier itself |
 | terms | — | `term.job` | `owned` |
 | terms | — | `term.job-activescriptormodule`, `term.job-preparedtoevaluatecode` | `foreignBoundary`: defined over the execution context stack |
-| terms | — | `term.promise-intrinsic`, `term.promise-prototype-object`, `term.promise-prototype-intrinsic` | `hostOnly`: intrinsic identities supplied by the host's realm |
+| terms | — | `term.%Promise%` (2707710–2707730), `term.%Promise.prototype%` (2736764–2736794), `term.Promise~20~prototype~20~object` (2736697–2736732); the `~20~` is R-P3's injective escaping of a space | `hostOnly`: intrinsic identities supplied by the host's realm |
 
-The ruled totals are the survey's: 77 rows, 3 `evidenceOnly` and therefore
-outside the denominator, and of the remaining 74, 44 `owned`, 13
-`foreignBoundary`, 10 `hostOnly` and 7 `requirement` (ruling R-P5). Nothing is
+The landed totals are 77 rows, 2 `evidenceOnly` and therefore outside the
+denominator, and of the remaining 75, 45 `owned`, 13 `foreignBoundary`, 10
+`hostOnly` and 7 `requirement` (ruling R-P5 as amended by
+`test/contracts/ecma262-census-q2.contract.md` §1.1, 2026-09-07). Nothing is
 `refused` and nothing is `targetOnly`. The 20 `emu-note` blocks are not rows at
-all. These are proposals seeded into `census/ecma262/`; do not quote them as
-coverage.
+all. These are the census's own counts, owned by `generated/ecma262-census.tsv`
+and seeded from `census/ecma262/`; do not quote them as coverage.
 
-The promise instance slots are `owned` here while the Streams census keeps
-`[[PromiseState]]`, `[[PromiseIsHandled]]` and `[[Value]]` `foreignBoundary`.
-The two censuses answer two ownership questions about two libraries; the
-Streams rows become references into `Whatwg.Ecma262` when P8 opens, and until
-then they stay exactly as P1 landed them.
+All five promise instance slots are `owned` here: `slot.PromiseState`
+(2744957–2745252), `slot.PromiseResult` (2745263–2745619),
+`slot.PromiseFulfillReactions` (2745630–2745966),
+`slot.PromiseRejectReactions` (2745977–2746311) and `slot.PromiseIsHandled`
+(2746322–2746637). Exactly two of them have a Streams counterpart:
+`slot.promise-state` (262706–262722) and `slot.promise-is-handled`
+(47309–47329), both `foreignBoundary` there. The third Streams row usually
+named beside those two, `slot.value` (93921–93930), is not a promise slot at
+all — it is a completion-record field read off a host abrupt completion, which
+is what `census/overrides.tsv` records — and it has no counterpart in this
+census, whose result slot is `[[PromiseResult]]`. The two censuses answer two
+ownership questions about two libraries; the two Streams promise rows become
+references into `Whatwg.Ecma262` when P8 opens, and until then they stay
+exactly as P1 landed them.
 
 ## Promise and job model (Streams)
 
@@ -295,11 +312,16 @@ ordering cases under mask M2.
   are `hostOnly` by authored override. Ratified by the coordinator at the
   P2 landing, 2026-09-02.
 
-## Rulings made at the promise lane opening (2026-09-06)
+## Rulings made at the promise lane opening (2026-09-06 and 2026-09-07)
 
-Seven rulings answer the open decisions of the two promise census surveys.
-`docs/PROMISE-PACKAGE-PLAN.md` owns the slices that carry them out and records
-which survey decision each one answers.
+Seventeen rulings, R-P1 to R-P17, govern this lane. The first seven answer the
+open decisions of the two promise census surveys and were made when the lane
+opened on 2026-09-06; R-P8 to R-P15 answer questions the plan seat, the
+operator and the extraction inventory raised over the following day, and R-P16
+and R-P17 ratify the two Q1 landings on 2026-09-07. `COORDINATION.md` is where
+each was first written down; this section is the manifest's transcription of
+all seventeen, and `docs/PROMISE-PACKAGE-PLAN.md` owns the slices that carry
+them out and records which survey decision each one answers.
 
 - **R-P1, generator shape.** `Gates.Census.Standard.definitionKeyed` becomes a
   source profile: a Bikeshed profile with per-scanner switches
@@ -349,6 +371,83 @@ which survey decision each one answers.
   parallel as a pure scanner with its own battery, and the `ecma262` standard
   on top of it; then independent review; then the coordinator lands with all
   gates. Two CI steps are added, one per standard.
+- **R-P8, algorithm names first.** The Bikeshed profile gains an
+  `algorithmNameFirst` switch, off for Streams and Infra, where it is
+  byte-neutral, and on for Web IDL, so an operation row is named from its
+  block's `algorithm` attribute rather than from the block's first `<dfn>` id.
+  R-P1's switch list is read as including it. The ruling's parenthetical
+  spelling `op.react` is retracted by R-P17.
+- **R-P9, Completion Records.** R-P6 fixes only where an escaping reference is
+  *recorded* — a category in `dependencies.tsv` — and never a disposition. The
+  completion discipline is reproduced by the model, as an `Except`-shaped
+  result, and no in-scope row is `foreignBoundary` for a completion reason.
+  The plan's reading is confirmed and Q3's acceptance condition stands.
+- **R-P10, Web IDL exceptions.** `idl-DOMException-derived-predefineds` is
+  `hostOnly` for the whole section, not `evidenceOnly` for its worked instance.
+  The base `DOMException` error names are one definition row per name, `owned`
+  as the data the table `Whatwg.WebIdl.Exceptions` reserves, rather than one
+  enumeration row. With the three heading-borne definitions R-P4 admits, the
+  expected scoped Web IDL total is 121, not the survey's 118; the breaker
+  freezes the count it recomputes, and the Q1 census carried 121. Slice Q2's
+  three authored `rule` rows take it to 124.
+- **R-P11, the escape groups R-P6 does not name.** The iterator tape, the
+  intrinsics, the error objects, the conventions record and the two out-of-lane
+  hooks are decided when `externals.tsv` is authored at Q2. None of them is
+  reached by a Q3 row.
+- **R-P12, extraction first.** The promise libraries are seeded by extraction
+  from what `Whatwg.Streams` already proves, never by fresh design. Every
+  inventoried declaration takes exactly one reuse mode — move (the definition
+  relocates and Streams keeps an `abbrev`, so dependent proofs are unchanged by
+  definitional equality), generalize (the Streams definition becomes an
+  instance of the general one with a bridging lemma, and its theorems are
+  re-derived rather than re-proved), or keep (stream-specific).
+  `docs/PROMISE-EXTRACTION-INVENTORY.md` exists before the Q3 breaker freezes
+  anything, the Q3 contract cites it row by row, and an ascription that
+  duplicates an existing Streams declaration without naming its reuse mode is a
+  defect.
+- **R-P13, signatures.** `Whatwg.Ecma262.Promise.State` takes a value and a
+  reason parameter, exactly as `Readable.PromiseState α ε` does, and
+  `Readable.PromiseState` becomes an `abbrev` of it. The reason parameter stays
+  free, because `Whatwg.Ecma262` imports only `Whatwg.Infra` under DB-11 and
+  `Whatwg.WebIdl` is what instantiates it with the Web IDL exception type.
+  Promise identities stay `Nat`. The job queue is payload-polymorphic and the
+  three Streams queues are its instances. Reuse mode is move for types and
+  generalize for every function named in a `local simp` set, so no existing
+  `simp` proof loses an equation lemma.
+- **R-P14, `Boundary.Exception`.** Allocation identity is preserved in the
+  general exception type: a Web IDL exception without identity cannot host the
+  nested-size-callback distinctness witnesses. It is its own sub-slice inside
+  Q3, landed last, after every other move has shown the P4–P7 batteries
+  unchanged.
+- **R-P15, the inventory's remaining decisions.** Decisions 6 to 9, 11 and 12 —
+  collapsing `PullAnswer` and `PullReturn`, guard versus assertion for
+  `settle`, one or two reaction lists, the shape of the handled record,
+  ownership of the `wait for all` rows, and the timing of the Streams slot
+  re-disposition — are the Q3 breaker's to propose in its contract with the
+  inventory row cited, and the coordinator ratifies them at freeze.
+- **R-P16, ratifying the Web IDL builder's landing.** `algorithmNameFirst`
+  lives on `Standard`, not on `Bikeshed`, because the frozen `Bikeshed.mk`
+  ascription has eight arguments. It is inert at the Web IDL pin: the eleven
+  promise-operation blocks carry no attribute value, so the frozen ids
+  (`op.dfn-perform-steps-once-promise-is-settled` and the like) stand and the
+  survey's `op.react` spelling is not adopted. The three further `Standard`
+  fields (`authoredTypeNames`, `authoredDependencies`, `crossCensusPaths`) and
+  the one import of each new rows module in `WhatwgTest.lean`, forced by the
+  audit's module-closure gate, are accepted. The three ECMA-262 escapes that
+  no row's span reaches are documented in the externals header rather than
+  recorded, since the generator refuses an unused external.
+- **R-P17, ratifying the Q1 landing.** The Q1 census landing is accepted.
+  R-P8's parenthetical `(op.react)` is retracted, and the frozen ids
+  `op.dfn-perform-steps-once-promise-is-settled`, `op.waiting-for-all-promise`
+  and `op.mark-a-promise-as-handled` stand for the life of the census. The Web
+  IDL contract's §8 sentence saying the anchor is the first that many bytes of
+  the span is superseded by the ES2026 contract's §11 rule: an anchor is at
+  least 24 bytes from its span start and may run past a short span, as six
+  landed rows do, and the invariant the gates check is anchor-at-span-start,
+  unique in the file. The Web IDL contract's §7 listing of three ECMA-262
+  identities as dependency rows is unsatisfiable under its own unused-external
+  rule, and the omission is ratified. Neither frozen contract's text is edited;
+  this ruling is the amendment.
 
 ## Open rows
 
